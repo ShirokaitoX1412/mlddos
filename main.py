@@ -4,22 +4,23 @@ main.py - DDoS Detection Pipeline Orchestrator
 Runs the end-to-end pipeline:
   Step 1: Download and load the CICDDoS2019 dataset
   Step 2: Preprocess the data (clean, engineer, encode, scale)
-  Step 3: Train and evaluate models (to be implemented)
+  Step 3: Train all 5 models, evaluate, and generate reports
+  Step 4: Generate comparison report and update README
 
 Usage:
-    python main.py              # Run Steps 1 & 2 only
-    python main.py --full       # Run all steps (when Step 3 is ready)
+    python main.py              # Run full pipeline (all steps)
+    python main.py --steps-1-2  # Run only Steps 1 & 2
 """
 
 import argparse
 import os
-import sys
 
 from data_loader import load_dataset
 from preprocessor import preprocess
+from models import train_and_evaluate, generate_markdown_report
 
 
-OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 
 
 def step1_load_data():
@@ -40,7 +41,6 @@ def step2_preprocess(train_df, test_df):
 
     result = preprocess(train_df, test_df)
 
-    # Print summaries
     print("\n\n" + "=" * 70)
     print("  DATA SUMMARY (BEFORE PREPROCESSING)")
     print("=" * 70)
@@ -51,7 +51,6 @@ def step2_preprocess(train_df, test_df):
     print("=" * 70)
     print(result["summary_after"])
 
-    # Final stats
     print("\n\n" + "=" * 70)
     print("  FINAL PROCESSED DATA SHAPES")
     print("=" * 70)
@@ -70,17 +69,56 @@ def step2_preprocess(train_df, test_df):
 
 
 def step3_train_evaluate(result):
-    """Step 3: Train models and evaluate. (To be implemented.)"""
+    """Step 3: Train all 5 models, evaluate, and generate visualizations."""
     print("\n" + "#" * 60)
     print("#  STEP 3: MODEL TRAINING & EVALUATION")
-    print("#  (Not yet implemented — will be added next)")
     print("#" * 60)
+
+    val_scores, test_scores = train_and_evaluate(result)
+
+    print("\n" + "=" * 60)
+    print("  VALIDATION SET RESULTS")
+    print("=" * 60)
+    print(val_scores.to_string())
+
+    print("\n" + "=" * 60)
+    print("  TEST SET RESULTS")
+    print("=" * 60)
+    print(test_scores.to_string())
+
+    return val_scores, test_scores
+
+
+def step4_generate_report(val_scores, test_scores):
+    """Step 4: Generate comparison report and save."""
+    print("\n" + "#" * 60)
+    print("#  STEP 4: GENERATING COMPARISON REPORT")
+    print("#" * 60)
+
+    report_md = generate_markdown_report(val_scores, test_scores)
+
+    report_path = os.path.join(RESULTS_DIR, "comparison_report.md")
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    with open(report_path, "w") as f:
+        f.write(report_md)
+    print(f"  Report saved: {report_path}")
+
+    # Determine best model
+    best_val = val_scores["F1-Score"].idxmax()
+    best_test = test_scores["F1-Score"].idxmax()
+
+    print(f"\n  Best Model (Validation F1): {best_val} "
+          f"(F1 = {val_scores.loc[best_val, 'F1-Score']:.6f})")
+    print(f"  Best Model (Test F1):       {best_test} "
+          f"(F1 = {test_scores.loc[best_test, 'F1-Score']:.6f})")
+
+    return report_md
 
 
 def main():
     parser = argparse.ArgumentParser(description="DDoS Detection Pipeline")
-    parser.add_argument("--full", action="store_true",
-                        help="Run all steps including model training")
+    parser.add_argument("--steps-1-2", action="store_true",
+                        help="Run only Steps 1 & 2 (data loading + preprocessing)")
     args = parser.parse_args()
 
     # Step 1
@@ -89,14 +127,24 @@ def main():
     # Step 2
     result = step2_preprocess(train_df, test_df)
 
-    # Step 3 (only if --full flag is passed)
-    if args.full:
-        step3_train_evaluate(result)
-    else:
+    if args.steps_1_2:
         print("\n" + "=" * 70)
         print("  Steps 1 & 2 complete.")
-        print("  Run with --full to proceed to model training (Step 3).")
+        print("  Run without --steps-1-2 to proceed to model training.")
         print("=" * 70)
+        return
+
+    # Step 3
+    val_scores, test_scores = step3_train_evaluate(result)
+
+    # Step 4
+    step4_generate_report(val_scores, test_scores)
+
+    print("\n" + "=" * 70)
+    print("  ALL STEPS COMPLETE!")
+    print("  Check results/ for plots and reports.")
+    print("  Check saved_models/ for trained model files.")
+    print("=" * 70)
 
 
 if __name__ == "__main__":

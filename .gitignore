@@ -1,7 +1,6 @@
 # Data
 data/
 *.parquet
-*.csv
 
 # Python
 __pycache__/
@@ -29,7 +28,9 @@ Thumbs.db
 
 # Output
 output/
-reports/
+
+# Saved models (large binary files)
+saved_models/
 *.pkl
 *.joblib
 
