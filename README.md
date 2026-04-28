@@ -1,10 +1,10 @@
-# DDoS Detection using Machine Learning
+# DDoS Detection & IPS using Machine Learning
 
 ## Overview
 
-Enhanced DDoS attack detection and classification system using the **CICDDoS2019** dataset.
-This project implements a multi-class classification pipeline that identifies various DDoS attack
-types from network traffic using five machine learning models.
+Enhanced DDoS attack detection, classification, and **real-time intrusion prevention** system
+using the **CICDDoS2019** dataset. This project implements a multi-class ML pipeline with
+5 models, SHAP explainability, a live Scapy-based IPS engine, and a professional Streamlit dashboard.
 
 **Reference**: Based on the methodology from
 [Kaggle: DDoS Detection using Machine Learning](https://www.kaggle.com/code/rakibhossainsajib/ddos-detection-using-machine-learning)
@@ -61,35 +61,46 @@ types from network traffic using five machine learning models.
 > which explains the performance gap. This reflects a realistic scenario where attack distributions
 > shift over time. The validation set (same distribution as training) shows all models achieve >99% F1.
 
-## Generated Reports & Visualizations
-
-All output files are saved in the `results/` directory:
-
-| File | Description |
-|------|-------------|
-| `*_confusion_matrix.png` | Confusion matrix heatmap for each model |
-| `*_roc_curve.png` | Per-class ROC curves (One-vs-Rest) for each model |
-| `*_feature_importance.png` | Top-20 feature importance (RF, Extra Trees, XGBoost) |
-| `model_comparison.png` | Grouped bar chart comparing all models |
-| `*_classification_report.txt` | Detailed per-class precision/recall/F1 |
-| `validation_scores.csv` / `test_scores.csv` | Metrics in CSV format |
-
-Trained models are saved in `saved_models/` as `.pkl` files.
-
-## Project Structure
+## System Architecture
 
 ```
 ML_DDOS/
-├── data_loader.py      # Dataset download and loading
-├── preprocessor.py     # Cleaning, feature engineering, scaling
-├── models.py           # 5 classifier definitions + training + evaluation
-├── main.py             # Pipeline orchestrator
-├── results/            # Generated plots, reports, and metrics
-├── saved_models/       # Trained model files (.pkl)
-├── requirements.txt    # Python dependencies
+├── data_loader.py        # Dataset download from Kaggle + loading
+├── preprocessor.py       # Cleaning, feature engineering, scaling
+├── models.py             # 5 classifier definitions + training + evaluation
+├── shap_explainer.py     # SHAP-based Explainable AI (XAI)
+├── live_ips.py           # Real-time IPS engine (Scapy sniffer)
+├── mitigation.py         # OS-level firewall commands (iptables/netsh)
+├── app.py                # Streamlit dashboard (dark-mode UI)
+├── main.py               # Pipeline orchestrator
+├── Dockerfile            # Container deployment
+├── results/              # Generated plots, reports, SHAP explanations
+├── saved_models/         # Trained model files (.pkl)
+├── requirements.txt      # Python dependencies
 ├── .gitignore
 └── README.md
 ```
+
+## Features
+
+### Explainable AI (SHAP)
+- SHAP summary plots showing which features drive attack classification
+- Per-class beeswarm plots explaining feature impact for each DDoS type
+- Force plots for individual prediction explanations
+
+### Real-Time IPS Engine (`live_ips.py`)
+- **Scapy-based** live packet sniffing and flow aggregation
+- Classifies network flows using the trained ML model
+- **Auto-mitigation**: blocks attacker IPs when attack confidence > 95%
+  - Linux: `iptables -A INPUT -s <IP> -j DROP`
+  - Windows: `netsh advfirewall firewall add rule ...`
+- **SIMULATION_MODE** (default: `True`) — prints commands without executing
+
+### Professional Dashboard (`app.py`)
+- **Dark-mode, high-tech UI** built with Streamlit
+- **Analytics Tab**: Model comparison, ROC curves, confusion matrices, SHAP plots
+- **Live Monitor Tab**: Real-time traffic log with RED attack alerts and block status
+- **Telegram Integration**: Instant attack notifications via Telegram bot
 
 ## Setup
 
@@ -109,12 +120,49 @@ pip install -r requirements.txt
 ## Usage
 
 ```bash
-# Run full pipeline (all 4 steps)
+# 1. Train models & generate all reports
 python main.py
 
-# Run only data loading + preprocessing (Steps 1 & 2)
+# 2. Generate SHAP explanations
+python shap_explainer.py
+
+# 3. Launch the Dashboard
+streamlit run app.py
+
+# 4. Start IPS in simulation mode (safe)
+sudo python live_ips.py
+
+# 5. Start IPS in LIVE mode (actually blocks IPs!)
+sudo python live_ips.py --live
+
+# 6. Run only preprocessing (Steps 1 & 2)
 python main.py --steps-1-2
 ```
+
+### Docker Deployment
+
+```bash
+docker build -t ddos-ips .
+docker run -p 8501:8501 ddos-ips
+```
+
+## Generated Reports & Visualizations
+
+All output files are saved in the `results/` directory:
+
+| File | Description |
+|------|-------------|
+| `*_confusion_matrix.png` | Confusion matrix heatmap for each model |
+| `*_roc_curve.png` | Per-class ROC curves (One-vs-Rest) for each model |
+| `*_feature_importance.png` | Top-20 feature importance (RF, Extra Trees, XGBoost) |
+| `*_shap_summary_bar.png` | SHAP global feature importance |
+| `*_shap_<class>.png` | SHAP beeswarm per attack class |
+| `*_shap_force_plot.png` | SHAP force plot for single prediction |
+| `model_comparison.png` | Grouped bar chart comparing all models |
+| `*_classification_report.txt` | Detailed per-class precision/recall/F1 |
+| `validation_scores.csv` / `test_scores.csv` | Metrics in CSV format |
+
+Trained models are saved in `saved_models/` as `.pkl` files.
 
 ## Dataset
 
@@ -142,3 +190,4 @@ For each model:
 - Confusion Matrix heatmap
 - ROC Curve per class (One-vs-Rest)
 - Feature Importance plot (tree-based models)
+- SHAP explainability plots
