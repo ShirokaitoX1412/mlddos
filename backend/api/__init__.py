@@ -1,0 +1,2 @@
+"""FastAPI serverless entrypoint package."""
+
