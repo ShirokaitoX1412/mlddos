@@ -1,0 +1,18 @@
+{
+  "include": [
+    ".",
+    "backend/src",
+    "frontend"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    ".venv",
+    "venv",
+    ".git"
+  ],
+  "extraPaths": [
+    "backend/src"
+  ],
+  "pythonVersion": "3.10",
+  "typeCheckingMode": "basic"
+}

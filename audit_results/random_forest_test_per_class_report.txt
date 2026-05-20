@@ -1,0 +1,15 @@
+Per-class report: Random Forest - test
+======================================================================
+               precision    recall  f1-score   support
+
+       Benign       0.60      1.00      0.75     10605
+   LDAP Flood       0.87      0.95      0.91      1440
+  MSSQL Flood       0.93      0.97      0.95      6212
+NetBIOS Flood       0.99      0.68      0.81       598
+TCP SYN Flood       0.11      0.02      0.03       533
+    UDP Flood       0.83      0.98      0.90     10420
+UDP-Lag Flood       1.00      0.00      0.00      8872
+
+     accuracy                           0.74     38680
+    macro avg       0.76      0.66      0.62     38680
+ weighted avg       0.81      0.74      0.65     38680

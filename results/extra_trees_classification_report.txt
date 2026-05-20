@@ -3,8 +3,8 @@ Classification Report: Extra Trees
                precision    recall  f1-score   support
 
        Benign       1.00      1.00      1.00      8196
-   LDAP Flood       0.94      0.94      0.94       377
-  MSSQL Flood       0.93      0.99      0.96      1687
+   LDAP Flood       0.94      0.95      0.95       377
+  MSSQL Flood       0.93      0.98      0.96      1687
 NetBIOS Flood       0.98      0.94      0.96        95
 TCP SYN Flood       1.00      1.00      1.00      9449
     UDP Flood       0.99      0.97      0.98      3559

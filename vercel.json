@@ -1,0 +1,9 @@
+{
+  "buildCommand": "pip install -r backend/requirements-vercel.txt",
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "backend/api/index.py"
+    }
+  ]
+}

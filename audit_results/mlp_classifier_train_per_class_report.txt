@@ -1,0 +1,15 @@
+Per-class report: MLP Classifier - train
+======================================================================
+               precision    recall  f1-score   support
+
+       Benign       1.00      1.00      1.00     32784
+   LDAP Flood       0.86      0.91      0.88      1508
+  MSSQL Flood       0.92      0.96      0.94      6747
+NetBIOS Flood       0.93      0.95      0.94       380
+TCP SYN Flood       1.00      0.99      1.00     37797
+    UDP Flood       0.99      0.97      0.98     14236
+UDP-Lag Flood       0.00      0.00      0.00        44
+
+     accuracy                           0.99     93496
+    macro avg       0.81      0.83      0.82     93496
+ weighted avg       0.99      0.99      0.99     93496
