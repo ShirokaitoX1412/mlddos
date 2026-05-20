@@ -241,6 +241,7 @@ Sau đó commit/push repo lên GitHub.
 Backend Vercel dùng các file:
 
 ```text
+api/index.py
 backend/api/index.py
 backend/requirements-vercel.txt
 vercel.json
@@ -252,7 +253,7 @@ Các bước:
 1. Vào Vercel, chọn **New Project**.
 2. Import GitHub repo này.
 3. Để **Root Directory** là root repo, không chọn riêng thư mục `backend`.
-4. Vercel sẽ đọc `vercel.json`.
+4. Vercel sẽ đọc `vercel.json` và dùng `api/index.py` làm Python Function entrypoint.
 5. Thêm Environment Variable nếu cần:
    ```text
    ALLOWED_ORIGINS=*
