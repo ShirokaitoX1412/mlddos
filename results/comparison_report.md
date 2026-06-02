@@ -1,24 +1,21 @@
-## Model Comparison Results
+## Robust Model Comparison
 
-### Validation Set Performance
+### Cross-Validation Performance
+| Model | CV Accuracy Mean | CV Accuracy Std | CV F1-Score Mean | CV F1-Score Std | CV F1-Macro Mean |
+| --- | --- | --- | --- | --- | --- |
+| Extra Trees | 0.993095 | 0.000255 | 0.993028 | 0.000304 | 0.878783 |
+| XGBoost | 0.991358 | 0.000232 | 0.991640 | 0.000233 | 0.879868 |
+| KNN | 0.991538 | 0.000095 | 0.991504 | 0.000145 | 0.879816 |
+| Random Forest | 0.992907 | 0.000087 | 0.992730 | 0.000091 | 0.841814 |
+| MLP Classifier | 0.988363 | 0.000409 | 0.988190 | 0.000407 | 0.820987 |
 
-| Model | Accuracy | Precision | Recall | F1-Score |
-|-------|----------|-----------|--------|----------|
-| Random Forest **[BEST]** | 0.993625 | 0.993587 | 0.993625 | 0.993578 |
-| KNN | 0.992256 | 0.992184 | 0.992256 | 0.992200 |
-| Extra Trees | 0.991914 | 0.992165 | 0.991914 | 0.991793 |
-| MLP Classifier | 0.988449 | 0.988344 | 0.988449 | 0.988331 |
-| XGBoost | 0.992256 | 0.992304 | 0.992256 | 0.992277 |
+### Held-Out Test Performance
+| Model | Test Accuracy | Test Precision | Test Recall | Test F1-Score | Test F1-Macro | Test ROC-AUC |
+| --- | --- | --- | --- | --- | --- | --- |
+| Extra Trees | 0.739685 | 0.812233 | 0.739685 | 0.645347 | 0.615672 | 0.866525 |
+| XGBoost | 0.737358 | 0.683817 | 0.737358 | 0.648907 | 0.638285 | 0.932562 |
+| KNN | 0.746510 | 0.922959 | 0.746510 | 0.712416 | 0.668477 | 0.865474 |
+| Random Forest | 0.739814 | 0.811988 | 0.739814 | 0.644868 | 0.615645 | 0.857130 |
+| MLP Classifier | 0.746484 | 0.688213 | 0.746484 | 0.709449 | 0.659968 | 0.855695 |
 
-### Test Set Performance
-
-| Model | Accuracy | Precision | Recall | F1-Score |
-|-------|----------|-----------|--------|----------|
-| Random Forest | 0.740124 | 0.814562 | 0.740124 | 0.646413 |
-| KNN **[BEST]** | 0.745915 | 0.901966 | 0.745915 | 0.712075 |
-| Extra Trees | 0.737616 | 0.809255 | 0.737616 | 0.642486 |
-| MLP Classifier | 0.746406 | 0.686445 | 0.746406 | 0.708714 |
-| XGBoost | 0.749405 | 0.868290 | 0.749405 | 0.709566 |
-
-**Best Model (Validation F1):** Random Forest
-**Best Model (Test F1):** KNN
+Selection prioritizes stable cross-validation F1, macro F1, and low overfitting risk.

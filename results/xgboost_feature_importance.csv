@@ -1,0 +1,26 @@
+feature,importance
+Fwd Packet Length Std,0.22937591
+ACK Flag Count,0.20113096
+Fwd PSH Flags,0.09403559
+Bwd Packets/s,0.06643474
+Idle Std,0.06583714
+URG Flag Count,0.05956459
+Fwd Packet Length Min,0.054959487
+Init Fwd Win Bytes,0.051908117
+Packet Length Max,0.017097149
+Bwd IAT Min,0.0145964995
+Fwd Packet Length Max,0.014148023
+Init Bwd Win Bytes,0.013168024
+Flow IAT Min,0.0130563555
+Total Backward Packets,0.011423711
+Fwd Packets Length Total,0.01111909
+Active Min,0.0104025155
+Fwd Act Data Packets,0.009910946
+Flow IAT Max,0.009011761
+Flow Packets/s,0.008027333
+Protocol,0.0065446873
+Flow Bytes/s,0.006529265
+Bwd Packet Length Min,0.004476338
+Total Fwd Packets,0.0043251445
+Bwd Packet Length Max,0.0028506855
+CWE Flag Count,0.0027570191

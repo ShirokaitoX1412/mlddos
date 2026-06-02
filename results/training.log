@@ -1,0 +1,19 @@
+2026-05-24 15:26:02,590 | INFO | Starting leakage-safe DDoS training pipeline
+2026-05-24 15:26:03,354 | INFO | Training rows=116870, test rows=38680, classes=['Benign', 'LDAP Flood', 'MSSQL Flood', 'NetBIOS Flood', 'TCP SYN Flood', 'UDP Flood', 'UDP-Lag Flood']
+2026-05-24 15:26:03,355 | INFO | CV strategy=StratifiedKFold
+2026-05-24 15:26:03,356 | INFO | RandomizedSearchCV: Random Forest
+2026-05-24 15:42:03,480 | INFO | Starting leakage-safe DDoS training pipeline
+2026-05-24 15:42:04,208 | INFO | Training rows=116870, test rows=38680, classes=['Benign', 'LDAP Flood', 'MSSQL Flood', 'NetBIOS Flood', 'TCP SYN Flood', 'UDP Flood', 'UDP-Lag Flood']
+2026-05-24 15:42:04,210 | INFO | CV strategy=StratifiedKFold
+2026-05-24 15:42:04,210 | INFO | RandomizedSearchCV: Random Forest
+2026-05-24 15:50:07,529 | INFO | Cross-validating baseline: KNN
+2026-05-24 15:54:53,045 | INFO | RandomizedSearchCV: Extra Trees
+2026-05-24 15:58:38,020 | INFO | Cross-validating baseline: MLP Classifier
+2026-05-24 16:02:35,437 | INFO | RandomizedSearchCV: XGBoost
+2026-05-24 16:13:27,561 | INFO | Fitting final model: Random Forest
+2026-05-24 16:14:26,477 | INFO | Fitting final model: KNN
+2026-05-24 16:16:03,953 | INFO | Fitting final model: Extra Trees
+2026-05-24 16:17:29,653 | INFO | Fitting final model: MLP Classifier
+2026-05-24 16:18:58,554 | INFO | Fitting final model: XGBoost
+2026-05-24 16:20:20,362 | INFO | Selected model=Extra Trees
+2026-05-24 16:20:20,362 | INFO | Artifacts saved to D:\source\CyRadar\mlddos\results and D:\source\CyRadar\mlddos\saved_models

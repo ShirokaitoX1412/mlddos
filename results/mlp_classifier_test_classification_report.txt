@@ -1,0 +1,15 @@
+Classification Report: MLP Classifier - test
+================================================================================
+               precision    recall  f1-score   support
+
+       Benign       1.00      0.99      0.99     10605
+   LDAP Flood       0.82      0.93      0.87      1440
+  MSSQL Flood       0.92      0.95      0.93      6212
+NetBIOS Flood       0.97      0.67      0.79       598
+TCP SYN Flood       0.07      1.00      0.14       533
+    UDP Flood       0.82      0.98      0.89     10420
+UDP-Lag Flood       0.00      0.00      0.00      8872
+
+     accuracy                           0.75     38680
+    macro avg       0.66      0.79      0.66     38680
+ weighted avg       0.69      0.75      0.71     38680

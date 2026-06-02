@@ -30,6 +30,7 @@ RESULTS_DIR = str(RESULTS_DIR)
 MODELS_DIR = str(MODELS_DIR)
 AUDIT_DIR = str(AUDIT_DIR)
 BACKEND_API_URL = os.getenv("BACKEND_API_URL", "").rstrip("/")
+LIVE_EVENTS_CSV = os.path.join(RESULTS_DIR, "live_events.csv")
 
 
 def _get_backend_health() -> dict:
@@ -91,6 +92,73 @@ def _generate_demo_events(threshold: float, n: int = 15) -> list:
             "blocked": blocked,
         })
     return events
+
+
+def _as_bool(value) -> bool:
+    """Normalize CSV booleans written by live_ips.py."""
+    if isinstance(value, bool):
+        return value
+    if pd.isna(value):
+        return False
+    return str(value).strip().lower() in {"true", "1", "yes", "y"}
+
+
+def _load_real_ips_events(limit: int = 500) -> list:
+    """Load real live IPS events written to results/live_events.csv."""
+    if not os.path.exists(LIVE_EVENTS_CSV):
+        return []
+
+    try:
+        df = pd.read_csv(LIVE_EVENTS_CSV)
+    except Exception:
+        return []
+
+    if df.empty:
+        return []
+
+    df = df.tail(limit).copy()
+    for col in ("is_attack", "blocked", "simulation"):
+        if col in df.columns:
+            df[col] = df[col].map(_as_bool)
+    if "confidence" in df.columns:
+        df["confidence"] = pd.to_numeric(df["confidence"], errors="coerce").fillna(0.0)
+    for col in ("fwd_packets", "bwd_packets", "protocol"):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
+
+    return df.to_dict("records")
+
+
+def _first_existing_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
+    """Return the first candidate column available in a metrics CSV."""
+    for col in candidates:
+        if col in df.columns:
+            return col
+    return None
+
+
+def _metric_column(df: pd.DataFrame, metric: str) -> str | None:
+    """Support both legacy metrics and robust CV/test metric column names."""
+    aliases = {
+        "accuracy": ["Accuracy", "CV Accuracy Mean", "Test Accuracy"],
+        "precision": ["Precision", "CV Precision Mean", "Test Precision"],
+        "recall": ["Recall", "CV Recall Mean", "Test Recall"],
+        "f1": ["F1-Score", "CV F1-Score Mean", "Test F1-Score"],
+        "f1_std": ["CV F1-Score Std"],
+        "f1_macro": ["F1-Macro", "CV F1-Macro Mean", "Test F1-Macro"],
+        "roc_auc": ["ROC-AUC", "Test ROC-AUC", "CV ROC-AUC Mean"],
+    }
+    return _first_existing_column(df, aliases.get(metric, []))
+
+
+def _highlight_metric_columns(df: pd.DataFrame) -> list[str]:
+    """Select existing metric columns for Streamlit table highlighting."""
+    cols = []
+    for metric in ("accuracy", "precision", "recall", "f1", "f1_macro", "roc_auc"):
+        col = _metric_column(df, metric)
+        if col:
+            cols.append(col)
+    return cols
 
 # ─── Helper: Telegram Sender ─────────────────────────────────────────
 def _send_telegram(token: str, chat_id: str, message: str, parse_mode: str = "HTML",
@@ -359,7 +427,18 @@ with tab1:
 
         # Top metrics cards
         col1, col2, col3, col4 = st.columns(4)
-        best_model = val_df.loc[val_df["F1-Score"].idxmax()]
+        best_f1_col = _metric_column(val_df, "f1")
+        best_acc_col = _metric_column(val_df, "accuracy")
+        if best_f1_col is None:
+            st.error(
+                "Could not find an F1 metric column in validation_scores.csv. "
+                f"Available columns: {', '.join(val_df.columns)}"
+            )
+            st.stop()
+
+        best_model = val_df.loc[pd.to_numeric(val_df[best_f1_col], errors="coerce").idxmax()]
+        best_accuracy = best_model[best_acc_col] if best_acc_col else np.nan
+        best_f1 = best_model[best_f1_col]
 
         with col1:
             st.markdown(f"""
@@ -373,7 +452,7 @@ with tab1:
             st.markdown(f"""
             <div class="metric-card">
                 <div class="metric-label">Accuracy</div>
-                <div class="metric-value">{best_model['Accuracy']:.4f}</div>
+                <div class="metric-value">{best_accuracy:.4f}</div>
             </div>
             """, unsafe_allow_html=True)
 
@@ -381,7 +460,7 @@ with tab1:
             st.markdown(f"""
             <div class="metric-card">
                 <div class="metric-label">F1-Score</div>
-                <div class="metric-value">{best_model['F1-Score']:.4f}</div>
+                <div class="metric-value">{best_f1:.4f}</div>
             </div>
             """, unsafe_allow_html=True)
 
@@ -400,17 +479,19 @@ with tab1:
 
         with col_left:
             st.markdown("### Validation Results")
+            val_highlight_cols = _highlight_metric_columns(val_df)
             st.dataframe(
-                val_df.style.highlight_max(subset=["Accuracy", "Precision", "Recall", "F1-Score"],
-                                           color="#0f3460"),
+                val_df.style.highlight_max(subset=val_highlight_cols, color="#0f3460")
+                if val_highlight_cols else val_df,
                 use_container_width=True
             )
 
         with col_right:
             st.markdown("### Test Results")
+            test_highlight_cols = _highlight_metric_columns(test_df)
             st.dataframe(
-                test_df.style.highlight_max(subset=["Accuracy", "Precision", "Recall", "F1-Score"],
-                                            color="#0f3460"),
+                test_df.style.highlight_max(subset=test_highlight_cols, color="#0f3460")
+                if test_highlight_cols else test_df,
                 use_container_width=True
             )
 
@@ -475,6 +556,14 @@ with tab2:
     if "blocked_count" not in st.session_state:
         st.session_state.blocked_count = 0
 
+    real_events = _load_real_ips_events()
+    display_events = real_events if real_events else st.session_state.ips_events
+    using_real_events = bool(real_events)
+    if using_real_events:
+        st.success(f"Reading real IPS events from `{LIVE_EVENTS_CSV}`")
+    else:
+        st.info("No real IPS CSV events yet. The demo controls below generate sample events.")
+
     # Status cards
     status_col1, status_col2, status_col3, status_col4 = st.columns(4)
 
@@ -482,12 +571,12 @@ with tab2:
         st.markdown(f"""
         <div class="metric-card">
             <div class="metric-label">Total Events</div>
-            <div class="metric-value">{len(st.session_state.ips_events)}</div>
+            <div class="metric-value">{len(display_events)}</div>
         </div>
         """, unsafe_allow_html=True)
 
     with status_col2:
-        attacks = sum(1 for e in st.session_state.ips_events if e.get("is_attack"))
+        attacks = sum(1 for e in display_events if e.get("is_attack"))
         st.markdown(f"""
         <div class="metric-card">
             <div class="metric-label">Attacks Detected</div>
@@ -496,7 +585,7 @@ with tab2:
         """, unsafe_allow_html=True)
 
     with status_col3:
-        blocked = sum(1 for e in st.session_state.ips_events if e.get("blocked"))
+        blocked = sum(1 for e in display_events if e.get("blocked"))
         st.markdown(f"""
         <div class="metric-card">
             <div class="metric-label">IPs Blocked</div>
@@ -517,7 +606,7 @@ with tab2:
     st.markdown("---")
 
     # Check for recent attacks
-    recent_attacks = [e for e in st.session_state.ips_events[-10:] if e.get("is_attack")]
+    recent_attacks = [e for e in display_events[-10:] if e.get("is_attack")]
     if recent_attacks:
         last_attack = recent_attacks[-1]
         st.markdown(f"""
@@ -560,8 +649,8 @@ with tab2:
 
     # Event log
     st.markdown("### Event Log")
-    if st.session_state.ips_events:
-        for event in reversed(st.session_state.ips_events[-50:]):
+    if display_events:
+        for event in reversed(display_events[-50:]):
             is_attack = event.get("is_attack", False)
             is_blocked = event.get("blocked", False)
 
@@ -585,7 +674,7 @@ with tab2:
             </div>
             """, unsafe_allow_html=True)
     else:
-        st.info("No events yet. Start the IPS or run `sudo python live_ips.py` for real traffic.")
+        st.info("No events yet. Run `python live_ips.py --list-interfaces`, then start live capture on a Windows/Npcap interface.")
 
     # Telegram alert for attacks
     if recent_attacks and telegram_token and telegram_chat_id:
@@ -738,21 +827,24 @@ FLOW_CHECK_INTERVAL = 5.0 seconds
 
     st.markdown("### Quick Start Commands")
     st.code("""
-# Train models & generate reports
+# Train models and generate reports
 python main.py
 
-# Generate SHAP explanations
-python shap_explainer.py
-
-# Start IPS (simulation mode)
-sudo python live_ips.py
-
-# Start IPS (LIVE mode — actually blocks IPs)
-sudo python live_ips.py --live
+# Replay IDS/IPS demo without a network card
+python replay_ips.py --speed 0.2 --limit 500
 
 # Launch Dashboard
 streamlit run app.py
-    """, language="bash")
+
+# List Windows/Npcap capture interfaces
+python live_ips.py --list-interfaces
+
+# Start IPS in safe simulation mode
+python live_ips.py --interface "Npcap Loopback Adapter" --threshold 0.95
+
+# Start IPS in LIVE mode from Administrator PowerShell only
+python live_ips.py --interface "<interface-name>" --threshold 0.99 --live
+    """, language="powershell")
 
     st.markdown("---")
 

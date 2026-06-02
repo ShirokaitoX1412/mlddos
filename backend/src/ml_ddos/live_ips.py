@@ -8,9 +8,9 @@ triggers mitigation (firewall block).
 SIMULATION_MODE (default: True) — prints block commands without executing.
 
 Usage:
-    sudo python live_ips.py                  # Run with default settings
-    sudo python live_ips.py --interface eth0 # Specify network interface
-    sudo python live_ips.py --live           # Disable simulation mode (DANGEROUS)
+    python live_ips.py --list-interfaces
+    python live_ips.py --interface "Npcap Loopback Adapter"
+    python live_ips.py --interface "<interface-name>" --live  # DANGEROUS
 """
 
 import os
@@ -18,15 +18,17 @@ import sys
 import time
 import pickle
 import argparse
+import csv
 import logging
 import threading
 from collections import defaultdict
 from datetime import datetime
 
 import numpy as np
+import pandas as pd
 
 try:
-    from scapy.all import sniff, IP, TCP, UDP
+    from scapy.all import sniff, IP, TCP, UDP, get_if_list
 except ImportError:
     print("[live_ips] Scapy not installed. Install: pip install scapy")
     sys.exit(1)
@@ -45,12 +47,40 @@ logger = logging.getLogger("live_ips")
 # Paths
 MODELS_DIR = str(PROJECT_MODELS_DIR)
 RESULTS_DIR = str(PROJECT_RESULTS_DIR)
+DEFAULT_EVENTS_CSV = os.path.join(RESULTS_DIR, "live_events.csv")
 
 # IPS Configuration
 ATTACK_THRESHOLD = 0.95       # Probability threshold for blocking
 FLOW_TIMEOUT = 10.0           # Seconds before a flow is considered complete
 FLOW_CHECK_INTERVAL = 5.0     # Seconds between flow aggregation checks
-DEFAULT_MODEL = "random_forest"
+DEFAULT_MODEL = "selected_model"
+
+
+CICDDOS_FEATURE_COLUMNS = [
+    "Protocol", "Flow Duration", "Total Fwd Packets", "Total Backward Packets",
+    "Fwd Packets Length Total", "Bwd Packets Length Total",
+    "Fwd Packet Length Max", "Fwd Packet Length Min", "Fwd Packet Length Mean",
+    "Fwd Packet Length Std", "Bwd Packet Length Max", "Bwd Packet Length Min",
+    "Bwd Packet Length Mean", "Bwd Packet Length Std", "Flow Bytes/s",
+    "Flow Packets/s", "Flow IAT Mean", "Flow IAT Std", "Flow IAT Max",
+    "Flow IAT Min", "Fwd IAT Total", "Fwd IAT Mean", "Fwd IAT Std",
+    "Fwd IAT Max", "Fwd IAT Min", "Bwd IAT Total", "Bwd IAT Mean",
+    "Bwd IAT Std", "Bwd IAT Max", "Bwd IAT Min", "Fwd PSH Flags",
+    "Bwd PSH Flags", "Fwd URG Flags", "Bwd URG Flags", "Fwd Header Length",
+    "Bwd Header Length", "Fwd Packets/s", "Bwd Packets/s",
+    "Packet Length Min", "Packet Length Max", "Packet Length Mean",
+    "Packet Length Std", "Packet Length Variance", "FIN Flag Count",
+    "SYN Flag Count", "RST Flag Count", "PSH Flag Count", "ACK Flag Count",
+    "URG Flag Count", "CWE Flag Count", "ECE Flag Count", "Down/Up Ratio",
+    "Avg Packet Size", "Avg Fwd Segment Size", "Avg Bwd Segment Size",
+    "Fwd Avg Bytes/Bulk", "Fwd Avg Packets/Bulk", "Fwd Avg Bulk Rate",
+    "Bwd Avg Bytes/Bulk", "Bwd Avg Packets/Bulk", "Bwd Avg Bulk Rate",
+    "Subflow Fwd Packets", "Subflow Fwd Bytes", "Subflow Bwd Packets",
+    "Subflow Bwd Bytes", "Init Fwd Win Bytes", "Init Bwd Win Bytes",
+    "Fwd Act Data Packets", "Fwd Seg Size Min", "Active Mean", "Active Std",
+    "Active Max", "Active Min", "Idle Mean", "Idle Std", "Idle Max",
+    "Idle Min",
+]
 
 
 class FlowAggregator:
@@ -237,6 +267,106 @@ def flow_to_features(flow: dict, n_features: int = 32) -> np.ndarray:
     return features
 
 
+def flow_to_feature_frame(flow: dict) -> pd.DataFrame:
+    """Convert a live flow into a CICDDoS-like raw feature DataFrame."""
+    fwd_lengths = flow["fwd_pkt_lengths"] or [0]
+    bwd_lengths = flow["bwd_pkt_lengths"] or [0]
+    all_lengths = fwd_lengths + bwd_lengths
+    flow_iats = flow["flow_iat"] or [0]
+    fwd_iats = flow["fwd_iat"] or [0]
+    bwd_iats = flow["bwd_iat"] or [0]
+
+    duration = (flow["last_time"] - flow["start_time"]) if flow["start_time"] and flow["last_time"] else 0
+    duration_us = max(duration * 1e6, 1)
+
+    total_fwd = flow["fwd_packets"]
+    total_bwd = flow["bwd_packets"]
+    total_packets = total_fwd + total_bwd
+    total_bytes = flow["fwd_bytes"] + flow["bwd_bytes"]
+
+    row = {column: 0.0 for column in CICDDOS_FEATURE_COLUMNS}
+    row.update({
+        "Protocol": flow["protocol"],
+        "Flow Duration": duration_us,
+        "Total Fwd Packets": total_fwd,
+        "Total Backward Packets": total_bwd,
+        "Fwd Packets Length Total": flow["fwd_bytes"],
+        "Bwd Packets Length Total": flow["bwd_bytes"],
+        "Fwd Packet Length Max": max(fwd_lengths),
+        "Fwd Packet Length Min": min(fwd_lengths),
+        "Fwd Packet Length Mean": float(np.mean(fwd_lengths)),
+        "Fwd Packet Length Std": float(np.std(fwd_lengths)) if len(fwd_lengths) > 1 else 0.0,
+        "Bwd Packet Length Max": max(bwd_lengths),
+        "Bwd Packet Length Min": min(bwd_lengths),
+        "Bwd Packet Length Mean": float(np.mean(bwd_lengths)),
+        "Bwd Packet Length Std": float(np.std(bwd_lengths)) if len(bwd_lengths) > 1 else 0.0,
+        "Flow Bytes/s": total_bytes / duration_us * 1e6,
+        "Flow Packets/s": total_packets / duration_us * 1e6,
+        "Flow IAT Mean": float(np.mean(flow_iats)) * 1e6,
+        "Flow IAT Std": float(np.std(flow_iats)) * 1e6 if len(flow_iats) > 1 else 0.0,
+        "Flow IAT Max": max(flow_iats) * 1e6,
+        "Flow IAT Min": min(flow_iats) * 1e6,
+        "Fwd IAT Total": sum(fwd_iats) * 1e6,
+        "Fwd IAT Mean": float(np.mean(fwd_iats)) * 1e6,
+        "Fwd IAT Std": float(np.std(fwd_iats)) * 1e6 if len(fwd_iats) > 1 else 0.0,
+        "Fwd IAT Max": max(fwd_iats) * 1e6,
+        "Fwd IAT Min": min(fwd_iats) * 1e6,
+        "Bwd IAT Total": sum(bwd_iats) * 1e6,
+        "Bwd IAT Mean": float(np.mean(bwd_iats)) * 1e6,
+        "Bwd IAT Std": float(np.std(bwd_iats)) * 1e6 if len(bwd_iats) > 1 else 0.0,
+        "Bwd IAT Max": max(bwd_iats) * 1e6,
+        "Bwd IAT Min": min(bwd_iats) * 1e6,
+        "Fwd PSH Flags": 1 if flow["flags"].get("PSH", 0) > 0 else 0,
+        "Fwd URG Flags": 1 if flow["flags"].get("URG", 0) > 0 else 0,
+        "Fwd Header Length": flow["fwd_bytes"] / max(total_fwd, 1),
+        "Bwd Header Length": flow["bwd_bytes"] / max(total_bwd, 1) if total_bwd > 0 else 0,
+        "Fwd Packets/s": total_fwd / duration_us * 1e6,
+        "Bwd Packets/s": total_bwd / duration_us * 1e6,
+        "Packet Length Min": min(all_lengths),
+        "Packet Length Max": max(all_lengths),
+        "Packet Length Mean": float(np.mean(all_lengths)),
+        "Packet Length Std": float(np.std(all_lengths)) if len(all_lengths) > 1 else 0.0,
+        "Packet Length Variance": float(np.var(all_lengths)) if len(all_lengths) > 1 else 0.0,
+        "FIN Flag Count": flow["flags"].get("FIN", 0),
+        "SYN Flag Count": flow["flags"].get("SYN", 0),
+        "RST Flag Count": flow["flags"].get("RST", 0),
+        "PSH Flag Count": flow["flags"].get("PSH", 0),
+        "ACK Flag Count": flow["flags"].get("ACK", 0),
+        "URG Flag Count": flow["flags"].get("URG", 0),
+        "Down/Up Ratio": total_bwd / total_fwd if total_fwd > 0 else 0,
+        "Avg Packet Size": total_bytes / max(total_packets, 1),
+        "Avg Fwd Segment Size": float(np.mean(fwd_lengths)),
+        "Avg Bwd Segment Size": float(np.mean(bwd_lengths)),
+        "Subflow Fwd Packets": total_fwd,
+        "Subflow Fwd Bytes": flow["fwd_bytes"],
+        "Subflow Bwd Packets": total_bwd,
+        "Subflow Bwd Bytes": flow["bwd_bytes"],
+        "Init Fwd Win Bytes": flow["fwd_bytes"],
+        "Init Bwd Win Bytes": flow["bwd_bytes"],
+        "Fwd Act Data Packets": total_fwd,
+        "Fwd Seg Size Min": min(fwd_lengths),
+        "Active Mean": duration_us,
+        "Active Max": duration_us,
+        "Active Min": duration_us,
+    })
+    return pd.DataFrame([row], columns=CICDDOS_FEATURE_COLUMNS)
+
+
+def predict_flow(model, flow: dict, label_map: dict):
+    """Predict a flow with either the new Pipeline model or legacy 32-feature model."""
+    feature_frame = flow_to_feature_frame(flow)
+    try:
+        proba = model.predict_proba(feature_frame)[0]
+    except Exception:
+        legacy = flow_to_features(flow).reshape(1, -1)
+        proba = model.predict_proba(legacy)[0]
+
+    pred_class = int(np.argmax(proba))
+    pred_prob = float(proba[pred_class])
+    pred_name = label_map.get(pred_class, f"Class {pred_class}")
+    return pred_name, pred_prob, pred_class
+
+
 class LiveIPS:
     """Real-time Intrusion Prevention System engine."""
 
@@ -244,7 +374,8 @@ class LiveIPS:
                  interface: str = None,
                  simulation: bool = True,
                  threshold: float = ATTACK_THRESHOLD,
-                 callback=None):
+                 callback=None,
+                 events_csv: str = DEFAULT_EVENTS_CSV):
         """
         Parameters
         ----------
@@ -258,12 +389,15 @@ class LiveIPS:
             Attack probability threshold for triggering mitigation.
         callback : callable or None
             Optional callback(event_dict) for each detection event.
+        events_csv : str
+            CSV path used by the dashboard to read real live IPS events.
         """
         self.model_name = model_name
         self.interface = interface
         self.simulation = simulation
         self.threshold = threshold
         self.callback = callback
+        self.events_csv = events_csv
 
         self.model = None
         self.scaler = None
@@ -274,10 +408,47 @@ class LiveIPS:
         self.event_log = []
 
         self._load_model()
+        self._ensure_events_csv()
+
+    def _ensure_events_csv(self):
+        """Create the event CSV with a stable header for the dashboard."""
+        if not self.events_csv:
+            return
+
+        os.makedirs(os.path.dirname(os.path.abspath(self.events_csv)), exist_ok=True)
+        if os.path.exists(self.events_csv) and os.path.getsize(self.events_csv) > 0:
+            return
+
+        with open(self.events_csv, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=self._event_fields())
+            writer.writeheader()
+
+    @staticmethod
+    def _event_fields():
+        return [
+            "timestamp", "src_ip", "dst_ip", "protocol",
+            "fwd_packets", "bwd_packets", "prediction", "confidence",
+            "is_attack", "blocked", "simulation", "model", "interface",
+        ]
+
+    def _write_event(self, event: dict):
+        """Append one IPS event so Streamlit can display real live detections."""
+        if not self.events_csv:
+            return
+
+        row = {field: event.get(field, "") for field in self._event_fields()}
+        with open(self.events_csv, "a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=self._event_fields())
+            writer.writerow(row)
 
     def _load_model(self):
         """Load the trained model and scaler."""
         model_path = os.path.join(MODELS_DIR, f"{self.model_name}.pkl")
+        if not os.path.exists(model_path) and self.model_name == "selected_model":
+            fallback = os.path.join(MODELS_DIR, "random_forest.pkl")
+            if os.path.exists(fallback):
+                logger.warning("selected_model.pkl not found. Falling back to random_forest.pkl")
+                model_path = fallback
         if not os.path.exists(model_path):
             logger.error(f"Model not found: {model_path}")
             logger.info("Run 'python main.py' first to train models.")
@@ -306,14 +477,11 @@ class LiveIPS:
 
             for key, flow in completed.items():
                 try:
-                    features = flow_to_features(flow)
-                    features_2d = features.reshape(1, -1)
-
-                    # Predict
-                    proba = self.model.predict_proba(features_2d)[0]
-                    pred_class = np.argmax(proba)
-                    pred_prob = proba[pred_class]
-                    pred_name = self.label_map.get(pred_class, f"Class {pred_class}")
+                    pred_name, pred_prob, pred_class = predict_flow(
+                        self.model,
+                        flow,
+                        self.label_map,
+                    )
 
                     src_ip = flow["src_ip"]
                     dst_ip = flow["dst_ip"]
@@ -329,6 +497,9 @@ class LiveIPS:
                         "confidence": float(pred_prob),
                         "is_attack": pred_name != "Benign",
                         "blocked": False,
+                        "simulation": self.simulation,
+                        "model": self.model_name,
+                        "interface": self.interface or "auto",
                     }
 
                     if pred_name == "Benign":
@@ -357,6 +528,7 @@ class LiveIPS:
                                 event["blocked"] = True
 
                     self.event_log.append(event)
+                    self._write_event(event)
                     if self.callback:
                         self.callback(event)
 
@@ -407,17 +579,27 @@ class LiveIPS:
 
 def main():
     parser = argparse.ArgumentParser(description="Live DDoS IPS Engine")
+    parser.add_argument("--list-interfaces", action="store_true",
+                        help="List available Scapy capture interfaces and exit")
     parser.add_argument("--interface", "-i", type=str, default=None,
                         help="Network interface to sniff (default: auto)")
     parser.add_argument("--model", "-m", type=str, default=DEFAULT_MODEL,
-                        help="Model to use (default: random_forest)")
+                        help=f"Model to use (default: {DEFAULT_MODEL})")
     parser.add_argument("--threshold", "-t", type=float, default=ATTACK_THRESHOLD,
                         help="Attack probability threshold (default: 0.95)")
     parser.add_argument("--live", action="store_true",
                         help="DANGEROUS: Disable simulation mode (actually block IPs)")
     parser.add_argument("--count", "-c", type=int, default=0,
                         help="Number of packets to capture (0=unlimited)")
+    parser.add_argument("--events-csv", type=str, default=DEFAULT_EVENTS_CSV,
+                        help=f"Path to write live IPS events (default: {DEFAULT_EVENTS_CSV})")
     args = parser.parse_args()
+
+    if args.list_interfaces:
+        print("Available capture interfaces:")
+        for iface in get_if_list():
+            print(f"  - {iface}")
+        return
 
     simulation = not args.live
 
@@ -426,6 +608,7 @@ def main():
         interface=args.interface,
         simulation=simulation,
         threshold=args.threshold,
+        events_csv=args.events_csv,
     )
 
     print(f"""

@@ -1,0 +1,14 @@
+"""Replay IPS entrypoint kept at repo root for compatibility."""
+
+from pathlib import Path
+import runpy
+import sys
+
+
+SRC_DIR = Path(__file__).resolve().parent / "backend" / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+
+if __name__ == "__main__":
+    runpy.run_module("ml_ddos.replay_ips", run_name="__main__")

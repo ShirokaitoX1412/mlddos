@@ -16,9 +16,9 @@ import argparse
 import os
 
 from .data_loader import load_dataset
-from .models import generate_markdown_report, train_and_evaluate
+from .models import TrainingConfig, generate_markdown_report, train_and_evaluate_from_raw
 from .paths import RESULTS_DIR as PROJECT_RESULTS_DIR
-from .preprocessor import preprocess
+from .preprocessor import generate_data_summary, harmonize_labels
 
 
 RESULTS_DIR = str(PROJECT_RESULTS_DIR)
@@ -34,51 +34,48 @@ def step1_load_data():
     return train_df, test_df
 
 
-def step2_preprocess(train_df, test_df):
-    """Step 2: Run the full preprocessing pipeline."""
+def step2_profile_data(train_df, test_df):
+    """Step 2: Profile raw data without fitting feature transforms."""
     print("\n" + "#" * 60)
-    print("#  STEP 2: PREPROCESSING")
+    print("#  STEP 2: RAW DATA PROFILING")
     print("#" * 60)
 
-    result = preprocess(train_df, test_df)
+    summary_before = generate_data_summary(train_df, test_df)
+    harmonized_train, harmonized_test = harmonize_labels(train_df, test_df)
+    summary_after = generate_data_summary(harmonized_train, harmonized_test)
 
     print("\n\n" + "=" * 70)
-    print("  DATA SUMMARY (BEFORE PREPROCESSING)")
+    print("  DATA SUMMARY (RAW)")
     print("=" * 70)
-    print(result["summary_before"])
+    print(summary_before)
 
     print("\n\n" + "=" * 70)
-    print("  DATA SUMMARY (AFTER PREPROCESSING)")
+    print("  DATA SUMMARY (AFTER LABEL HARMONIZATION ONLY)")
     print("=" * 70)
-    print(result["summary_after"])
+    print(summary_after)
 
-    print("\n\n" + "=" * 70)
-    print("  FINAL PROCESSED DATA SHAPES")
-    print("=" * 70)
-    print(f"  X_train: {result['X_train'].shape}")
-    print(f"  X_val:   {result['X_val'].shape}")
-    print(f"  X_test:  {result['X_test'].shape}")
-    print(f"  y_train: {result['y_train'].shape}")
-    print(f"  y_val:   {result['y_val'].shape}")
-    print(f"  y_test:  {result['y_test'].shape}")
-    print(f"\n  Features retained:   {len(result['feature_names'])}")
-    print(f"  Columns dropped (single-value): {len(result['dropped_single_val'])}")
-    print(f"  Columns dropped (high corr):    {len(result['dropped_high_corr'])}")
-    print(f"\n  Label mapping: {result['label_map']}")
-
-    return result
+    print("\n  No scalers, imputers, encoders, or feature filters were fitted in this step.")
+    print("  Those transforms are fitted inside each CV training fold.")
+    return summary_before, summary_after
 
 
-def step3_train_evaluate(result):
-    """Step 3: Train all 5 models, evaluate, and generate visualizations."""
+def step3_train_evaluate(train_df, test_df, args):
+    """Step 3: Train, tune, evaluate, and generate visualizations."""
     print("\n" + "#" * 60)
-    print("#  STEP 3: MODEL TRAINING & EVALUATION")
+    print("#  STEP 3: LEAKAGE-SAFE MODEL TRAINING & EVALUATION")
     print("#" * 60)
 
-    val_scores, test_scores = train_and_evaluate(result)
+    config = TrainingConfig(
+        cv_folds=args.cv_folds,
+        search_iter=args.search_iter,
+        correlation_threshold=args.correlation_threshold,
+        enable_smote=not args.no_smote,
+        n_jobs=args.n_jobs,
+    )
+    val_scores, test_scores = train_and_evaluate_from_raw(train_df, test_df, config=config)
 
     print("\n" + "=" * 60)
-    print("  VALIDATION SET RESULTS")
+    print("  CROSS-VALIDATION RESULTS")
     print("=" * 60)
     print(val_scores.to_string())
 
@@ -119,14 +116,24 @@ def step4_generate_report(val_scores, test_scores):
 def main():
     parser = argparse.ArgumentParser(description="DDoS Detection Pipeline")
     parser.add_argument("--steps-1-2", action="store_true",
-                        help="Run only Steps 1 & 2 (data loading + preprocessing)")
+                        help="Run only Steps 1 & 2 (data loading + raw profiling)")
+    parser.add_argument("--cv-folds", type=int, default=5,
+                        help="Number of stratified/group-aware CV folds")
+    parser.add_argument("--search-iter", type=int, default=20,
+                        help="RandomizedSearchCV iterations for RF, Extra Trees, and XGBoost")
+    parser.add_argument("--correlation-threshold", type=float, default=0.9,
+                        help="Training-fold correlation threshold for dropping redundant features")
+    parser.add_argument("--no-smote", action="store_true",
+                        help="Disable SMOTE candidate pipelines")
+    parser.add_argument("--n-jobs", type=int, default=-1,
+                        help="Parallel jobs for CV/search")
     args = parser.parse_args()
 
     # Step 1
     train_df, test_df = step1_load_data()
 
     # Step 2
-    result = step2_preprocess(train_df, test_df)
+    step2_profile_data(train_df, test_df)
 
     if args.steps_1_2:
         print("\n" + "=" * 70)
@@ -136,7 +143,7 @@ def main():
         return
 
     # Step 3
-    val_scores, test_scores = step3_train_evaluate(result)
+    val_scores, test_scores = step3_train_evaluate(train_df, test_df, args)
 
     # Step 4
     step4_generate_report(val_scores, test_scores)
