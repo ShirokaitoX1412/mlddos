@@ -231,6 +231,47 @@ def draw_training_evaluation():
     save(fig, "quy_trinh_huan_luyen_danh_gia_mo_hinh")
 
 
+def draw_hyperparameter_optimization():
+    fig, ax = setup_figure()
+    title(ax, "Sơ đồ tối ưu tham số trong quá trình huấn luyện mô hình")
+
+    box(ax, 4, 64, 16, 16, "Dữ liệu huấn luyện", "Tập dữ liệu đã tiền xử lý\nvà giữ nguyên nhãn gốc", "blue")
+    box(ax, 25, 64, 17, 16, "Không gian tham số", "Số cây\nđộ sâu cây\ntốc độ học\ntrọng số lớp", "amber")
+    box(ax, 47, 64, 17, 16, "Lấy mẫu cấu hình", "Chọn ngẫu nhiên\nnhiều tổ hợp tham số", "cyan")
+    box(ax, 69, 64, 17, 16, "Kiểm định chéo", "Chia nhiều lượt\nhuấn luyện và đánh giá", "violet")
+
+    arrow(ax, (20, 72), (25, 72), label="đưa vào")
+    arrow(ax, (42, 72), (47, 72), label="lấy mẫu")
+    arrow(ax, (64, 72), (69, 72), label="đánh giá")
+
+    box(ax, 8, 34, 18, 16, "Tính điểm", "F1-score\nPrecision\nRecall\nđộ lệch chuẩn", "green")
+    box(ax, 32, 34, 18, 16, "So sánh cấu hình", "Ưu tiên hiệu quả ổn định\nkhông chọn theo accuracy đơn lẻ", "slate")
+    box(ax, 56, 34, 18, 16, "Cấu hình tốt nhất", "Bộ tham số tối ưu\ncho từng mô hình ứng viên", "blue")
+    box(ax, 78, 34, 16, 16, "Huấn luyện lại", "Fit trên toàn bộ\ntập huấn luyện", "amber")
+
+    arrow(ax, (78, 64), (17, 50), label="kết quả từng lượt")
+    arrow(ax, (26, 42), (32, 42), label="tổng hợp")
+    arrow(ax, (50, 42), (56, 42), label="chọn")
+    arrow(ax, (74, 42), (78, 42), label="fit lại")
+
+    box(ax, 24, 8, 20, 14, "Đánh giá kiểm thử", "Chỉ dùng một lần\nsau khi chọn tham số", "red")
+    box(ax, 56, 8, 20, 14, "Mô hình triển khai", "Lưu thành tệp mô hình\nphục vụ demo IDS/IPS", "violet")
+    arrow(ax, (86, 34), (44, 22), label="kiểm tra tổng quát")
+    arrow(ax, (44, 15), (56, 15), label="đạt yêu cầu")
+
+    ax.text(
+        50,
+        3,
+        "Mục tiêu của tối ưu tham số là tăng khả năng tổng quát hóa, không làm tăng giả tạo điểm trên tập kiểm định.",
+        ha="center",
+        va="center",
+        fontsize=9,
+        color=COLORS["muted"],
+        family="DejaVu Sans",
+    )
+    save(fig, "so_do_toi_uu_tham_so_mo_hinh")
+
+
 def draw_demo_topology():
     fig, ax = setup_figure()
     title(ax, "Sơ đồ mạng mô phỏng trong môi trường SDN")
@@ -313,6 +354,7 @@ def main():
     draw_system_architecture()
     draw_data_preprocessing()
     draw_training_evaluation()
+    draw_hyperparameter_optimization()
     draw_demo_topology()
     draw_realtime_monitoring()
     draw_sdn_detection_sequence()
