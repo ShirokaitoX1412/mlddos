@@ -74,6 +74,7 @@ def step3_train_evaluate(train_df, test_df, args):
         balance_training=not args.no_balance,
         attack_to_benign_ratio=args.attack_to_benign_ratio,
         max_binary_group_samples=args.max_binary_group_samples,
+        min_attack_class_samples=args.min_attack_class_samples,
     )
     val_scores, test_scores = train_and_evaluate_from_raw(train_df, test_df, config=config)
 
@@ -134,6 +135,8 @@ def main():
                         help="Target attack/benign ratio in the balanced training split")
     parser.add_argument("--max-binary-group-samples", type=int, default=40000,
                         help="Maximum samples kept for each binary group in the training split")
+    parser.add_argument("--min-attack-class-samples", type=int, default=500,
+                        help="Minimum samples per attack class after oversampling rare classes")
     parser.add_argument("--n-jobs", type=int, default=-1,
                         help="Parallel jobs for CV/search")
     args = parser.parse_args()
