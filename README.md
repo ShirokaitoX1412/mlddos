@@ -1,404 +1,526 @@
-# Phát hiện và ngăn chặn DDoS bằng Học máy
+# Nghiên cứu xây dựng giải pháp phát hiện DDoS sử dụng học máy
 
-## Tổng quan
+## 1. Tổng quan đề tài
 
-Đây là đề tài xây dựng hệ thống phát hiện, phân loại và hỗ trợ ngăn chặn tấn công DDoS bằng **Học máy** trên bộ dữ liệu **CICDDoS2019**. Dự án triển khai một quy trình nhiều lớp gồm: nạp dữ liệu, tiền xử lý, huấn luyện mô hình, đánh giá kết quả, giải thích mô hình bằng SHAP, giám sát lưu lượng thời gian thực bằng Scapy và bảng điều khiển trực quan bằng Streamlit.
+### 1.1. Mô tả bài toán
 
-**Tài liệu tham khảo**: Phương pháp được phát triển dựa trên bài thực hành Kaggle:
-[DDoS Detection using Machine Learning](https://www.kaggle.com/code/rakibhossainsajib/ddos-detection-using-machine-learning)
+Tấn công từ chối dịch vụ phân tán (Distributed Denial of Service — DDoS) là một trong những mối đe dọa nghiêm trọng nhất đối với hạ tầng mạng hiện đại. Kẻ tấn công sử dụng lượng lớn lưu lượng giả mạo để làm quá tải tài nguyên máy chủ, khiến dịch vụ không thể phục vụ người dùng hợp lệ.
 
-## Tóm tắt công việc đã thực hiện
+Bài toán đặt ra: **phân loại lưu lượng mạng thành 7 lớp** (1 lớp bình thường và 6 lớp tấn công DDoS khác nhau) dựa trên các đặc trưng thống kê của luồng dữ liệu (network flow features), sử dụng các thuật toán học máy có giám sát.
 
-Trong đề tài **phát hiện và ngăn chặn tấn công DDoS bằng Học máy**, tôi đã thực hiện các công việc chính sau:
+### 1.2. Lý do sử dụng học máy
 
-1. **Thu thập và chuẩn bị dữ liệu**
-   - Sử dụng bộ dữ liệu **CICDDoS2019** ở định dạng Parquet.
-   - Xây dựng module `data_loader.py` để tải, quét, lọc và gộp dữ liệu huấn luyện/kiểm thử.
-   - Chỉ giữ lại các loại tấn công xuất hiện ở cả tập huấn luyện và tập kiểm thử.
+- Các phương pháp dựa trên ngưỡng cố định (threshold-based) không thể phân biệt được các biến thể tấn công DDoS ngày càng tinh vi.
+- Học máy cho phép tự động học các pattern phức tạp từ dữ liệu lưu lượng mạng mà không cần lập trình thủ công từng quy tắc.
+- Khả năng phân loại đa lớp giúp không chỉ phát hiện mà còn **xác định loại tấn công cụ thể**, hỗ trợ phản ứng phù hợp.
 
-2. **Tiền xử lý dữ liệu**
-   - Chuẩn hóa tên nhãn giữa tập huấn luyện và tập kiểm thử.
-   - Ánh xạ các nhãn thành 7 lớp: Benign, TCP SYN Flood, UDP Flood, UDP-Lag Flood, LDAP Flood, MSSQL Flood, NetBIOS Flood.
-   - Xóa dữ liệu trùng lặp, xử lý giá trị thiếu, NaN và vô cực.
-   - Loại bỏ các cột chỉ có một giá trị và các cột có tương quan cao.
-   - Mã hóa nhãn bằng `LabelEncoder` và chuẩn hóa đặc trưng bằng `MinMaxScaler`.
-   - Chia dữ liệu huấn luyện thành tập huấn luyện con và tập xác thực theo tỉ lệ 80/20.
+### 1.3. Mục tiêu hệ thống
 
-3. **Xây dựng và huấn luyện mô hình**
-   - Cài đặt và huấn luyện 5 mô hình: Random Forest, KNN, Extra Trees, MLP Classifier và XGBoost.
-   - Lưu các mô hình đã huấn luyện vào thư mục `saved_models/`.
-   - Toàn bộ quá trình được điều phối trong `main.py`.
+1. Xây dựng pipeline học máy hoàn chỉnh: từ nạp dữ liệu, tiền xử lý, huấn luyện, đánh giá đến lưu mô hình.
+2. Đảm bảo tính khoa học: kiểm soát data leakage, overfitting, đánh giá bằng cross-validation và nhiều thước đo.
+3. Xuất mô hình tương thích với SDN/Ryu controller để demo phát hiện DDoS trên mạng ảo (Mininet/Open vSwitch).
+4. Cung cấp giao diện giám sát trực quan bằng Streamlit.
 
-4. **Đánh giá và so sánh kết quả**
-   - Đánh giá mô hình bằng Accuracy, Precision, Recall và F1-score.
-   - Tạo confusion matrix, ROC curve, classification report và biểu đồ so sánh mô hình.
-   - Kết quả trên tập xác thực tốt nhất thuộc về **Random Forest** với F1-score khoảng **0.99345**.
-   - Kết quả trên tập kiểm thử tốt nhất thuộc về **KNN** với F1-score khoảng **0.71172**.
-   - Nhận xét được sự chênh lệch hiệu năng giữa tập xác thực và tập kiểm thử do phân phối dữ liệu kiểm thử khác với dữ liệu huấn luyện.
+### 1.4. Phạm vi
 
-5. **Giải thích mô hình bằng SHAP**
-   - Xây dựng `shap_explainer.py` để giải thích kết quả dự đoán.
-   - Tạo SHAP summary plot, SHAP theo từng lớp tấn công và force plot cho dự đoán cụ thể.
-   - Giúp phân tích những đặc trưng ảnh hưởng mạnh đến việc phân loại DDoS.
+- Dữ liệu: bộ CICDDoS2019 ở dạng flow features (đã trích xuất sẵn bằng CICFlowMeter), không phải raw packet.
+- Thuật toán: Random Forest, Extra Trees, XGBoost, MLP Classifier.
+- Triển khai demo: Ryu SDN controller + Mininet, Streamlit dashboard, replay IDS offline.
 
-6. **Xây dựng hệ thống IPS thời gian thực**
-   - Xây dựng `live_ips.py` để bắt gói tin bằng Scapy.
-   - Gom các packet thành network flow, trích xuất đặc trưng và đưa vào mô hình ML để dự đoán.
-   - Nếu phát hiện tấn công với độ tin cậy cao, hệ thống có thể gọi module mitigation để chặn IP.
+---
 
-7. **Xây dựng cơ chế giảm thiểu tấn công**
-   - Xây dựng `mitigation.py` để chặn và bỏ chặn IP bằng firewall.
-   - Hỗ trợ Linux với `iptables` và Windows với `netsh advfirewall`.
-   - Có chế độ `SIMULATION_MODE` để demo an toàn, chỉ in lệnh mà không thực thi thật.
+## 2. Bộ dữ liệu sử dụng
 
-8. **Xây dựng bảng điều khiển giám sát**
-   - Xây dựng giao diện `app.py` bằng Streamlit.
-   - Hiển thị kết quả phân tích mô hình, bảng điểm, confusion matrix, ROC curve và SHAP.
-   - Tạo màn hình Live Monitor để hiển thị log, cảnh báo tấn công và trạng thái block IP.
-   - Tích hợp cấu hình cảnh báo Telegram.
+### 2.1. Thông tin chung
 
-9. **Đóng gói và triển khai**
-   - Tạo `requirements.txt` để quản lý thư viện Python.
-   - Tạo cấu hình deploy không dùng Docker gồm `Procfile`, `render.yaml`, `runtime.txt` và `.streamlit/config.toml`.
+| Thuộc tính | Giá trị |
+|------------|---------|
+| Tên dataset | CICDDoS2019 |
+| Nguồn | Canadian Institute for Cybersecurity, University of New Brunswick |
+| Link tải | https://www.kaggle.com/datasets/dhoogla/cicddos2019 |
+| Định dạng | Parquet (chia theo attack type, train/test riêng) |
+| Số đặc trưng ban đầu | 78 đặc trưng lưu lượng mạng |
+| Tổng số bản ghi | 158.987 (train: 120.065 + test: 38.973) |
+| Sau loại trùng lặp | 150.472 bản ghi duy nhất |
 
-Tóm lại, đề tài đã hoàn thành một quy trình từ đầu đến cuối cho bài toán DDoS + Học máy: từ dữ liệu, tiền xử lý, huấn luyện, đánh giá, giải thích mô hình đến ứng dụng giám sát và phòng thủ thời gian thực.
+### 2.2. Các lớp phân loại
 
-## Các mô hình sử dụng
+| Lớp | Mô tả | Tỷ lệ (sau resplit) |
+|-----|--------|---------------------|
+| **Benign** | Lưu lượng bình thường, không chứa tấn công | 34,26% |
+| **TCP SYN Flood** | Gửi hàng loạt gói TCP SYN để làm cạn bảng kết nối | 31,77% |
+| **UDP Flood** | Gửi lượng lớn gói UDP ngẫu nhiên gây quá tải băng thông | 18,09% |
+| **MSSQL Flood** | Khuếch đại phản hồi từ dịch vụ Microsoft SQL Server | 8,03% |
+| **UDP-Lag Flood** | Gửi gói UDP với kích thước lớn gây trễ xử lý | 5,63% |
+| **LDAP Flood** | Khuếch đại phản hồi từ dịch vụ LDAP | 1,81% |
+| **NetBIOS Flood** | Khai thác giao thức NetBIOS để khuếch đại lưu lượng | 0,45% |
 
-| STT | Mô hình | Mô tả | Tham số chính |
-|-----|---------|-------|---------------|
-| 1 | **Random Forest** | Tập hợp nhiều cây quyết định theo cơ chế bagging | `n_estimators=200`, `max_depth=25`, `min_samples_split=5` |
-| 2 | **KNN** | Phân loại dựa trên các điểm láng giềng gần nhất | `n_neighbors=7`, `weights=distance`, `metric=minkowski` |
-| 3 | **Extra Trees** | Mô hình cây cực ngẫu nhiên | `n_estimators=200`, `max_depth=25`, `min_samples_split=5` |
-| 4 | **MLP Classifier** | Mạng nơ-ron nhiều lớp | `hidden_layer_sizes=(128,64)`, `solver=adam`, `early_stopping=True` |
-| 5 | **XGBoost** | Mô hình cây tăng cường gradient | `n_estimators=200`, `max_depth=10`, `learning_rate=0.1`, `subsample=0.8` |
+### 2.3. Đặc điểm dữ liệu
 
-## Các loại lưu lượng và tấn công
+Dữ liệu ở dạng **flow-level features** — mỗi bản ghi đại diện cho một luồng mạng (network flow) đã được trích xuất bằng CICFlowMeter, bao gồm các đặc trưng thống kê như: số gói tin, kích thước gói, thời gian giữa các gói (IAT), cờ TCP, tốc độ truyền, v.v. Đây không phải dữ liệu raw packet.
 
-| Lớp | Mô tả |
-|-----|------|
-| **TCP SYN Flood** | Tấn công tràn gói SYN |
-| **UDP Flood** | Tấn công tràn lưu lượng UDP |
-| **UDP-Lag Flood** | Tấn công UDP gây độ trễ |
-| **LDAP Flood** | Tấn công khuếch đại qua LDAP |
-| **MSSQL Flood** | Tấn công nhắm vào dịch vụ MSSQL |
-| **NetBIOS Flood** | Tấn công liên quan đến NetBIOS |
-| **Benign** | Lưu lượng bình thường, không phải tấn công |
+---
 
-## Kết quả so sánh mô hình
+## 3. Kiến trúc hệ thống
 
-### Kết quả trên tập xác thực
-
-| Mô hình | Accuracy | Precision | Recall | F1-score |
-|---------|----------|-----------|--------|----------|
-| Random Forest **[TỐT NHẤT]** | 0.993497 | 0.993461 | 0.993497 | 0.993451 |
-| KNN | 0.992470 | 0.992395 | 0.992470 | 0.992412 |
-| Extra Trees | 0.991786 | 0.992032 | 0.991786 | 0.991662 |
-| MLP Classifier | 0.989604 | 0.989367 | 0.989604 | 0.989448 |
-| XGBoost | 0.992256 | 0.992283 | 0.992256 | 0.992267 |
-
-### Kết quả trên tập kiểm thử
-
-| Mô hình | Accuracy | Precision | Recall | F1-score |
-|---------|----------|-----------|--------|----------|
-| Random Forest | 0.739710 | 0.813425 | 0.739710 | 0.645638 |
-| KNN **[TỐT NHẤT]** | 0.745579 | 0.922581 | 0.745579 | 0.711721 |
-| Extra Trees | 0.737823 | 0.812042 | 0.737823 | 0.643344 |
-| MLP Classifier | 0.747285 | 0.687910 | 0.747285 | 0.709916 |
-| XGBoost | 0.743666 | 0.843288 | 0.743666 | 0.695535 |
-
-**Mô hình tốt nhất trên tập xác thực theo F1-score:** Random Forest  
-**Mô hình tốt nhất trên tập kiểm thử theo F1-score:** KNN
-
-> Lưu ý: Hiệu năng trên tập kiểm thử thấp hơn tập xác thực vì phân phối lớp của tập kiểm thử khác đáng kể so với tập huấn luyện. Đây là tình huống thực tế trong an ninh mạng, khi kiểu tấn công và tần suất tấn công có thể thay đổi theo thời gian.
-
-## Kiến trúc hệ thống
+### 3.1. Sơ đồ workflow
 
 ```text
-ML_DDOS/
-|-- app.py                # Wrapper chạy frontend/app.py
-|-- main.py               # Wrapper huấn luyện tương thích lệnh cũ
-|-- model_audit.py        # Wrapper kiểm tra split/leakage/metrics
-|-- requirements.txt      # Danh sách thư viện Python
-|-- Procfile              # Start command cho nền tảng kiểu Heroku/Railway
-|-- render.yaml           # Cấu hình deploy Render
-|-- runtime.txt           # Phiên bản Python cho nền tảng deploy
-|-- packages.txt          # System packages nếu nền tảng deploy hỗ trợ
-|-- .streamlit/
-|   `-- config.toml       # Cấu hình Streamlit server
-|-- backend/
-|   |-- main.py                # Entrypoint backend: huấn luyện
-|   |-- model_audit.py         # Entrypoint backend: audit
-|   |-- live_ips.py            # Entrypoint backend: IPS
-|   |-- shap_explainer.py      # Entrypoint backend: SHAP
-|   |-- requirements.txt       # Dependencies backend
-|   `-- src/
-|       `-- ml_ddos/
-|       |-- data_loader.py      # Tải và nạp dữ liệu CICDDoS2019
-|       |-- preprocessor.py     # Làm sạch, xử lý đặc trưng, mã hóa và chuẩn hóa dữ liệu
-|       |-- models.py           # Định nghĩa, huấn luyện và đánh giá mô hình
-|       |-- model_audit.py      # Kiểm tra per-class metrics, confusion matrix, CV
-|       |-- shap_explainer.py   # Giải thích mô hình bằng SHAP
-|       |-- live_ips.py         # Bộ máy IPS thời gian thực dựa trên Scapy
-|       |-- mitigation.py       # Lệnh firewall để chặn/bỏ chặn IP
-|       |-- paths.py            # Quản lý đường dẫn dùng chung khi deploy
-|       `-- __init__.py
-|-- frontend/
-|   |-- app.py                 # Dashboard Streamlit
-|   `-- requirements.txt       # Dependencies frontend
-|-- data/                # Dữ liệu CICDDoS2019
-|-- results/             # Biểu đồ, báo cáo và kết quả SHAP
-|-- saved_models/        # Các mô hình đã huấn luyện
-|-- audit_results/       # Báo cáo kiểm tra mô hình
-|-- .gitignore
-`-- README.md
+┌─────────────┐     ┌──────────────┐     ┌─────────────────┐     ┌──────────────┐
+│  CICDDoS2019│────▶│  Data Loader │────▶│  Preprocessor   │────▶│ Train/Test   │
+│  (Parquet)  │     │  + Resplit   │     │  (Leakage-safe) │     │   Split      │
+└─────────────┘     └──────────────┘     └─────────────────┘     └──────┬───────┘
+                                                                         │
+                    ┌──────────────┐     ┌─────────────────┐             │
+                    │  Saved Model │◀────│ Model Training  │◀────────────┘
+                    │  (.pkl)      │     │ + Evaluation    │
+                    └──────┬───────┘     └─────────────────┘
+                           │
+            ┌──────────────┼──────────────────┐
+            ▼              ▼                  ▼
+    ┌──────────────┐ ┌──────────┐    ┌───────────────┐
+    │ SDN/Ryu      │ │ Replay   │    │  Streamlit    │
+    │ Controller   │ │ IDS Demo │    │  Dashboard    │
+    └──────────────┘ └──────────┘    └───────────────┘
 ```
 
-Hệ thống được chia thành `backend/` và `frontend/` nhưng vẫn là modular monolith. Backend chứa toàn bộ logic dữ liệu, huấn luyện, audit, IPS và mitigation. Frontend chứa dashboard Streamlit. Các file Python ở root như `app.py`, `main.py`, `model_audit.py` là wrapper mỏng để giữ nguyên lệnh chạy cũ.
+### 3.2. Các thành phần
 
-## Chức năng chính
+| Thành phần | File | Chức năng |
+|------------|------|-----------|
+| Data Loader | `data_loader.py` | Tải dataset, lọc attack types, gộp và chia lại dữ liệu |
+| Preprocessor | `preprocessor.py` | Chuẩn hóa nhãn, xử lý missing/inf, loại cột tương quan cao, scale features |
+| Training Pipeline | `main.py`, `models.py` | Huấn luyện, cross-validation, hyperparameter tuning, so sánh models |
+| Model Evaluation | `models.py` | Confusion matrix, classification report, ROC-AUC, composite score |
+| Saved Models | `saved_models/` | Lưu trữ model đã train dạng pickle |
+| Replay IDS | `replay_ips.py` | Demo offline — phát lại flow từ dataset, phân loại và ghi log |
+| Live IPS | `live_ips.py` | Bắt gói tin thời gian thực bằng Scapy, phân loại và chặn IP |
+| SDN Controller | `sdn_ryu_detector.py` | Ryu OpenFlow controller, giám sát flow stats và phát hiện DDoS |
+| Dashboard | `frontend/app.py` | Giao diện Streamlit hiển thị kết quả và giám sát |
+| SHAP Explainer | `shap_explainer.py` | Giải thích mô hình bằng SHAP values |
 
-### Giải thích mô hình bằng SHAP
+### 3.3. Cấu trúc thư mục
 
-- Tạo biểu đồ SHAP summary để xem đặc trưng nào ảnh hưởng mạnh đến kết quả phân loại.
-- Tạo biểu đồ SHAP theo từng lớp tấn công.
-- Tạo force plot để giải thích một dự đoán cụ thể.
+```text
+mlddos/
+├── backend/
+│   ├── src/ml_ddos/
+│   │   ├── data_loader.py        # Nạp dữ liệu + combine_and_resplit()
+│   │   ├── preprocessor.py       # Tiền xử lý leakage-safe
+│   │   ├── models.py             # Định nghĩa và huấn luyện mô hình
+│   │   ├── main.py               # Pipeline chính (CLI)
+│   │   ├── sdn_ryu_detector.py   # Ryu/SDN controller
+│   │   ├── live_ips.py           # IPS thời gian thực (Scapy)
+│   │   ├── replay_ips.py         # Demo phát lại flow offline
+│   │   ├── mitigation.py         # Chặn/bỏ chặn IP (iptables/netsh)
+│   │   ├── shap_explainer.py     # Giải thích SHAP
+│   │   └── paths.py              # Quản lý đường dẫn
+│   └── requirements.txt
+├── frontend/
+│   └── app.py                    # Dashboard Streamlit
+├── notebooks/
+│   └── ddos_detection_report_ready.ipynb   # Notebook báo cáo
+├── tests/
+│   └── test_smoke_predict.py     # Kiểm thử predict_proba
+├── data/                          # Dữ liệu CICDDoS2019
+├── results/                       # Kết quả, biểu đồ, CSV
+├── saved_models/                  # Models đã train (.pkl)
+└── README.md
+```
 
-### IPS thời gian thực (`live_ips.py`)
+---
 
-- Bắt gói tin trực tiếp bằng Scapy.
-- Gom các packet thành network flow.
-- Phân loại flow bằng mô hình ML đã huấn luyện.
-- Tự động chặn IP tấn công khi độ tin cậy vượt ngưỡng cấu hình.
-- Hỗ trợ chế độ mô phỏng `SIMULATION_MODE=True` để demo an toàn.
+## 4. Quy trình xử lý dữ liệu
 
-### Bảng điều khiển giám sát (`app.py`)
+### 4.1. Nạp dữ liệu
 
-- Giao diện Streamlit nền tối.
-- Tab phân tích để xem bảng điểm, biểu đồ so sánh, ROC curve, confusion matrix và SHAP.
-- Tab giám sát trực tiếp để xem log, cảnh báo tấn công và trạng thái chặn IP.
-- Tích hợp cấu hình gửi cảnh báo qua Telegram.
+- Quét thư mục `data/` để tìm các file Parquet theo pattern `*-training.parquet` và `*-testing.parquet`.
+- Chỉ giữ lại các attack type xuất hiện ở **cả** tập train và test.
+- Module: `data_loader.collect_file_paths()`, `data_loader.load_dataframes()`.
 
-## Cài đặt
+### 4.2. Chuẩn hóa nhãn
+
+- Ánh xạ tên nhãn thô (VD: `DrDoS_UDP`, `Syn`, `WebDDoS`) sang 7 lớp chuẩn.
+- Loại bỏ các nhãn không thuộc danh sách 7 lớp (VD: `WebDDoS` chỉ có trong test).
+- Module: `preprocessor.harmonize_labels()`.
+
+### 4.3. Gộp và chia lại dữ liệu (Combine & Re-split)
+
+Đây là bước quan trọng nhất để xử lý **distribution shift** của CICDDoS2019:
+
+1. Gộp tập train và test gốc thành một tập duy nhất.
+2. Loại bỏ bản ghi trùng lặp (deduplication theo toàn bộ feature columns).
+3. Chia lại theo tỷ lệ 80/20 bằng **stratified sampling** — đảm bảo mỗi lớp có tỷ lệ đồng đều giữa train và test mới.
+
+Module: `data_loader.combine_and_resplit()`.
+
+### 4.4. Xử lý giá trị không hợp lệ
+
+- Thay thế giá trị `inf` và `NaN` bằng trung vị (median) của cột tương ứng.
+- Trung vị được tính **chỉ trên tập train** để tránh data leakage.
+- Module: `preprocessor.fit_invalid_value_medians()`, `preprocessor.apply_invalid_value_medians()`.
+
+### 4.5. Loại bỏ cột không hữu ích
+
+- Loại cột có duy nhất 1 giá trị (không mang thông tin phân biệt).
+- Loại cột có tương quan cao (> 0,90) để giảm multicollinearity.
+- Danh sách cột cần loại được xác định **chỉ trên tập train**.
+- Module: `preprocessor.drop_single_value_columns()`, `preprocessor.drop_highly_correlated()`.
+
+### 4.6. Chuẩn hóa đặc trưng
+
+- Sử dụng `MinMaxScaler` để đưa features về khoảng [0, 1].
+- Scaler được **fit trên tập train**, chỉ transform trên test/validation.
+- Module: `preprocessor.scale_features()`.
+
+### 4.7. Xử lý mất cân bằng lớp
+
+- `RandomOverSampler` cho các lớp thiểu số (LDAP, NetBIOS).
+- `RandomUnderSampler` cho lớp đa số (Benign, TCP SYN).
+- Stage 2 oversampling cho các lớp cực hiếm (< 500 mẫu).
+- Module: `models.balance_training_distribution()`.
+
+### 4.8. Mã hóa nhãn
+
+- Sử dụng `LabelEncoder` ánh xạ 7 tên lớp sang chỉ số 0–6.
+- Module: `preprocessor.encode_labels()`.
+
+---
+
+## 5. Mô hình học máy
+
+### 5.1. Danh sách mô hình
+
+| Mô hình | Mô tả | Đặc điểm |
+|---------|--------|-----------|
+| **Random Forest** | Tập hợp nhiều cây quyết định theo cơ chế bagging | Robust với noise, ít overfitting |
+| **Extra Trees** | Cây cực ngẫu nhiên — chọn ngưỡng split ngẫu nhiên | Nhanh hơn RF, giảm variance |
+| **XGBoost** | Gradient boosting trên cây quyết định | Hiệu suất cao, regularization mạnh |
+| **MLP Classifier** | Mạng nơ-ron nhiều lớp (feedforward) | Học được non-linear boundaries |
+
+### 5.2. Hyperparameter tuning
+
+- Sử dụng `RandomizedSearchCV` với StratifiedKFold.
+- Không dùng default parameters — mỗi model được tuning riêng.
+- Regularization được áp dụng có chủ đích: giảm `max_depth`, tăng `min_samples_leaf`, `reg_lambda`.
+
+### 5.3. Tiêu chí chọn mô hình
+
+Mô hình được chọn dựa trên **Selection Score** (composite score), không chỉ dựa vào Accuracy:
+
+```
+Selection Score = Macro F1 + 0.5 × Minority Recall + 0.25 × Balanced Accuracy − 0.25 × max(0, Train/Test Gap)
+```
+
+Các thước đo được cân nhắc:
+
+| Thước đo | Ý nghĩa |
+|----------|---------|
+| **Macro F1** | Trung bình F1 của tất cả lớp — đánh giá công bằng kể cả lớp ít mẫu |
+| **Weighted F1** | F1 có trọng số theo số mẫu — phản ánh hiệu suất tổng thể |
+| **Balanced Accuracy** | Trung bình recall các lớp — xử lý imbalance |
+| **Minority Class Recall** | Recall của lớp ít mẫu nhất — đảm bảo phát hiện attack hiếm |
+| **Train/Test Gap** | Chênh lệch F1 giữa train và test — phát hiện overfitting |
+| **CV Macro F1** | Cross-Validation F1 — ước lượng generalization |
+
+---
+
+## 6. Kết quả thực nghiệm
+
+> Dữ liệu metric dưới đây được trích từ file `results/report_ready_model_comparison.csv` và `results/report_ready_final_summary.csv` sau khi chạy pipeline với phương pháp Combine & Re-split.
+
+### 6.1. Bảng so sánh mô hình
+
+| Mô hình | Phương pháp | Accuracy | Balanced Accuracy | Macro F1 | Weighted F1 | Minority Recall | CV Macro F1 |
+|---------|-------------|----------|-------------------|----------|-------------|-----------------|-------------|
+| **XGBoost** | **baseline** | **0,9756** | **0,9328** | **0,9386** | **0,9751** | **0,9101** | **0,9314 ± 0,0056** |
+| Random Forest | baseline | 0,9751 | 0,9269 | 0,9388 | 0,9745 | 0,8918 | 0,9168 ± 0,0032 |
+| Random Forest | class_weight | 0,9657 | 0,9391 | 0,8750 | 0,9668 | 0,9661 | 0,9152 ± 0,0029 |
+| XGBoost | UnderSampler | 0,9736 | 0,9331 | 0,9361 | 0,9731 | 0,9129 | 0,9315 ± 0,0044 |
+| MLP Classifier | OverSampler | 0,9702 | 0,9286 | 0,9233 | 0,9694 | 0,9349 | 0,8878 ± 0,0113 |
+
+### 6.2. Hiệu suất phân loại theo từng lớp (Best model: XGBoost baseline)
+
+| Lớp | Precision | Recall | F1-score | Support |
+|-----|-----------|--------|----------|---------|
+| Benign | 0,9938 | 0,9989 | 0,9964 | 10.306 |
+| TCP SYN Flood | 0,9999 | 0,9865 | 0,9932 | 9.554 |
+| UDP Flood | 0,9303 | 0,9906 | 0,9595 | 5.443 |
+| MSSQL Flood | 0,9532 | 0,9690 | 0,9610 | 2.417 |
+| UDP-Lag Flood | 0,9460 | 0,7646 | 0,8457 | 1.695 |
+| LDAP Flood | 0,8818 | 0,8932 | 0,8875 | 543 |
+| NetBIOS Flood | 0,9270 | 0,9270 | 0,9270 | 137 |
+| **Macro avg** | **0,9474** | **0,9328** | **0,9386** | **30.095** |
+
+### 6.3. Tổng hợp kết quả
+
+| Thuộc tính | Giá trị |
+|------------|---------|
+| Dataset | CICDDoS2019 |
+| Phương pháp chia dữ liệu | Combine & Re-split (stratified 80/20) |
+| Tổng bản ghi sau loại trùng | 150.472 |
+| Tập huấn luyện | 120.377 bản ghi |
+| Tập kiểm thử | 30.095 bản ghi |
+| Số đặc trưng đầu vào | 77 (trước loại bỏ) |
+| Mô hình được chọn | XGBoost (baseline) |
+| Train/Test Macro F1 Gap | 0,0021 |
+
+### 6.4. So sánh trước và sau khi xử lý distribution shift
+
+| Thước đo | Trước (Source Split gốc) | Sau (Combine & Re-split) |
+|----------|--------------------------|--------------------------|
+| Mô hình tốt nhất | KNN | XGBoost |
+| Test F1-Weighted | 0,698 | 0,975 |
+| Test F1-Macro | 0,677 | 0,939 |
+| CV/Test Gap | ~30% | < 1% |
+| UDP-Lag F1 | ≈ 0,00 | 0,846 |
+| TCP SYN F1 | ≈ 0,14 | 0,993 |
+
+---
+
+## 7. Kiểm soát overfitting và data leakage
+
+### 7.1. Các biện pháp đã áp dụng
+
+| Biện pháp | Chi tiết |
+|-----------|----------|
+| **Preprocessing chỉ fit trên train** | MinMaxScaler, median imputer, danh sách cột cần drop — tất cả được xác định chỉ trên tập train |
+| **Stratified split** | Chia dữ liệu giữ nguyên tỷ lệ lớp |
+| **Cross-validation** | StratifiedKFold 3–5 fold, tính mean ± std |
+| **Loại cột leakage** | Loại bỏ cột có tương quan quá cao (> 0,90) với target hoặc cột định danh |
+| **Regularization** | Giảm `max_depth`, tăng `min_samples_leaf`, `reg_lambda` cho XGBoost |
+| **Train/Test Gap monitoring** | So sánh Macro F1 trên train và test — gap > 5% cảnh báo overfitting |
+| **Deduplication** | Loại bản ghi trùng trước khi split để tránh cùng flow rơi vào cả train/test |
+
+### 7.2. Kết quả kiểm soát
+
+- **Train/Test Macro F1 Gap** của mô hình được chọn: **0,0021** (0,21%) — không có overfitting.
+- **CV Macro F1**: 0,9314 ± 0,0056 — độ lệch chuẩn thấp, mô hình ổn định qua các fold.
+
+### 7.3. Vấn đề distribution shift đã xử lý
+
+CICDDoS2019 chia train/test theo nguồn tấn công (source-based split), gây ra phân phối lớp cực kỳ lệch:
+
+| Lớp | Train % (gốc) | Test % (gốc) | Chênh lệch |
+|-----|----------------|---------------|-------------|
+| UDP-Lag | 0,05% | 22,79% | +22,74% |
+| TCP SYN | 44,05% | 13,37% | −30,68% |
+| Benign | 35,28% | 27,94% | −7,34% |
+
+Hậu quả: mô hình học phân phối train nhưng test có phân phối khác hoàn toàn → CV F1 = 0,99 nhưng Test F1 chỉ đạt 0,70 (gap 30%). Giải pháp: gộp, loại trùng, chia lại stratified đã loại bỏ hoàn toàn vấn đề này.
+
+---
+
+## 8. Triển khai demo hệ thống
+
+### 8.1. Replay IDS (Demo offline — không cần card mạng)
+
+**Mục đích**: Demo phát hiện DDoS bằng cách phát lại flow từ dataset, không cần capture packet thật. Phù hợp cho trình bày báo cáo.
+
+**Lệnh chạy:**
+```bash
+# Ubuntu
+PYTHONPATH=backend/src python -m ml_ddos.replay_ips --model selected_model --rows 200
+
+# Windows PowerShell
+$env:PYTHONPATH="backend\src"; python -m ml_ddos.replay_ips --model selected_model --rows 200
+```
+
+**Kết quả sinh ra**: `results/live_events.csv` — log các flow đã phân loại, bao gồm timestamp, predicted label, confidence.
+
+**Lưu ý**: Không thực thi lệnh chặn IP, chỉ ghi log.
+
+### 8.2. Live IPS (Giám sát thời gian thực bằng Scapy)
+
+**Mục đích**: Bắt gói tin thực tế từ card mạng, gom thành flow, phân loại và chặn IP nếu phát hiện tấn công.
+
+**Lệnh chạy:**
+```bash
+# Chế độ mô phỏng (an toàn — chỉ ghi log, không chặn IP thật)
+sudo PYTHONPATH=backend/src python -m ml_ddos.live_ips
+
+# Chế độ thật (CÓ chặn IP bằng iptables)
+sudo PYTHONPATH=backend/src python -m ml_ddos.live_ips --live
+```
+
+**Kết quả sinh ra**: Log cảnh báo real-time, `results/live_events.csv`.
+
+**Lưu ý an toàn**: Chế độ `--live` sẽ thực thi lệnh `iptables` để chặn IP. Chỉ chạy trên máy lab/VM, không chạy trên production server.
+
+### 8.3. Dashboard Streamlit
+
+**Mục đích**: Giao diện trực quan hiển thị kết quả phân tích, biểu đồ so sánh models, confusion matrix, ROC curve, SHAP, và log giám sát.
+
+**Lệnh chạy:**
+```bash
+streamlit run frontend/app.py
+```
+
+**Kết quả**: Mở trình duyệt tại `http://localhost:8501` với các tab: Phân tích mô hình, Giám sát trực tiếp, Cảnh báo.
+
+### 8.4. SDN/Ryu Controller (Mininet + Open vSwitch)
+
+**Mục đích**: Demo phát hiện DDoS trong môi trường mạng ảo SDN. Controller giám sát flow statistics từ OpenFlow switch và gọi model để phân loại.
+
+**Yêu cầu**: Ubuntu với Mininet, Open vSwitch, Ryu framework đã cài đặt.
+
+**Lệnh chạy:**
+```bash
+# Terminal 1: Khởi chạy Ryu controller
+PYTHONPATH=backend/src ryu-manager backend/src/ml_ddos/sdn_ryu_detector.py
+
+# Terminal 2: Khởi chạy Mininet topology
+sudo mn --controller=remote --switch=ovsk --topo=tree,depth=2,fanout=3
+
+# Terminal 3 (trong Mininet): Sinh traffic test
+h1 ping h2
+h1 hping3 --flood -S -p 80 h2   # Giả lập SYN flood
+```
+
+**Kết quả**: Controller in log phân loại flow mỗi 10 giây, tự động gọi `predict_proba()` và cảnh báo nếu phát hiện DDoS.
+
+**Lưu ý**: Cần file `saved_models/selected_model.pkl` đã train trước khi chạy controller.
+
+---
+
+## 9. Hướng dẫn cài đặt và chạy project
+
+### 9.1. Yêu cầu hệ thống
+
+- Python 3.10 trở lên
+- pip hoặc virtualenv
+- (Tùy chọn) Mininet + Open vSwitch + Ryu cho demo SDN
+- (Tùy chọn) Scapy + quyền root cho Live IPS
+
+### 9.2. Cài đặt
 
 ```bash
+# Clone repository
+git clone https://github.com/ShirokaitoX1412/mlddos.git
+cd mlddos
+
 # Tạo môi trường ảo
 python -m venv venv
-source venv/bin/activate   # Linux/Mac
-# venv\Scripts\activate    # Windows
+
+# Kích hoạt môi trường ảo
+# Ubuntu/Mac:
+source venv/bin/activate
+# Windows PowerShell:
+# .\venv\Scripts\Activate.ps1
 
 # Cài đặt thư viện
-pip install -r requirements.txt
-
-# Cấu hình Kaggle API nếu cần tải dữ liệu từ Kaggle
-# Đặt file kaggle.json vào thư mục ~/.kaggle/
+pip install -r backend/requirements.txt
 ```
 
-## Cách sử dụng
+### 9.3. Chuẩn bị dữ liệu
+
+Dữ liệu CICDDoS2019 cần được đặt trong thư mục `data/` với cấu trúc:
+```text
+data/
+├── cicddos2019/
+│   ├── *-training.parquet
+│   └── *-testing.parquet
+```
+
+Nếu có Kaggle API:
+```bash
+pip install kaggle
+kaggle datasets download -d dhoogla/cicddos2019 -p data/
+unzip data/cicddos2019.zip -d data/cicddos2019/
+```
+
+### 9.4. Huấn luyện mô hình
 
 ```bash
-# 1. Huấn luyện mô hình và sinh toàn bộ báo cáo
-python main.py
+# Ubuntu
+PYTHONPATH=backend/src python -m ml_ddos.main --combine-resplit --cv-folds 3 --search-iter 10
 
-# 2. Sinh biểu đồ giải thích SHAP
-python shap_explainer.py
-
-# 3. Chạy bảng điều khiển
-streamlit run app.py
-
-# 4. Chạy IPS ở chế độ mô phỏng an toàn
-sudo python live_ips.py
-
-# 5. Chạy IPS ở chế độ thật, có thể thực thi lệnh chặn IP
-sudo python live_ips.py --live
-
-# 6. Chỉ chạy bước nạp dữ liệu và tiền xử lý
-python main.py --steps-1-2
+# Windows PowerShell
+$env:PYTHONPATH="backend\src"; python -m ml_ddos.main --combine-resplit --cv-folds 3 --search-iter 10
 ```
 
-## Triển khai không dùng Docker
+**Các tham số CLI:**
 
-Hệ thống deploy theo 2 phần:
+| Tham số | Mô tả | Mặc định |
+|---------|--------|----------|
+| `--combine-resplit` | Gộp train+test, loại trùng, chia lại stratified | Không (dùng source split) |
+| `--cv-folds N` | Số fold Cross-Validation | 5 |
+| `--search-iter N` | Số iteration RandomizedSearchCV | 20 |
+| `--min-attack-class-samples N` | Số mẫu tối thiểu cho rare classes | 300 |
 
-- **Backend API**: FastAPI nhẹ tại `backend/api/index.py`, deploy lên Vercel.
-- **Frontend dashboard**: Streamlit tại `frontend/app.py`, deploy lên Render.
+**Output:**
+- `saved_models/selected_model.pkl` — mô hình tốt nhất
+- `results/` — CSV kết quả, biểu đồ, classification report
 
-Những tác vụ nặng như train model, audit full, SHAP, IPS sniffing và firewall mitigation nên chạy local hoặc trên worker/VPS riêng. Vercel backend chỉ dùng cho health check, đọc metrics, đọc audit summary và metadata.
-
-### 1. Chuẩn bị trước khi deploy
-
-Chạy local để bảo đảm đã có kết quả cho dashboard/API:
+### 9.5. Chạy notebook báo cáo
 
 ```bash
-python backend/main.py
-python backend/model_audit.py --models random_forest --cv-folds 3
+jupyter notebook notebooks/ddos_detection_report_ready.ipynb
 ```
 
-Sau đó commit/push repo lên GitHub.
+Notebook chạy toàn bộ pipeline và xuất kết quả phù hợp cho báo cáo: bảng metric, confusion matrix, biểu đồ so sánh models, kiểm tra SDN compatibility.
 
-### 2. Deploy backend trên Vercel
-
-Backend Vercel dùng các file:
-
-```text
-api/index.py
-backend/api/index.py
-backend/requirements-vercel.txt
-vercel.json
-.vercelignore
-```
-
-Các bước:
-
-1. Vào Vercel, chọn **New Project**.
-2. Import GitHub repo này.
-3. Để **Root Directory** là root repo, không chọn riêng thư mục `backend`.
-4. Vercel sẽ đọc `vercel.json` và dùng `api/index.py` làm Python Function entrypoint.
-5. Thêm Environment Variable nếu cần:
-   ```text
-   ALLOWED_ORIGINS=*
-   ```
-   Khi có URL Render frontend, có thể đổi thành:
-   ```text
-   ALLOWED_ORIGINS=https://your-frontend.onrender.com
-   ```
-6. Deploy.
-7. Test backend:
-   ```text
-   https://your-backend.vercel.app/health
-   https://your-backend.vercel.app/docs
-   ```
-
-Các endpoint chính:
-
-```text
-GET /health
-GET /model-info
-GET /metrics/validation
-GET /metrics/test
-GET /audit/summary
-GET /audit/weighted-metrics
-GET /audit/per-class
-GET /audit/class-distribution
-GET /audit/leakage-checks
-GET /manifest
-```
-
-### 3. Deploy frontend trên Render
-
-Frontend Render dùng các file:
-
-```text
-frontend/app.py
-requirements.txt
-render.yaml
-Procfile
-.streamlit/config.toml
-packages.txt
-```
-
-Các bước:
-
-1. Vào Render, chọn **New Web Service**.
-2. Chọn repo này.
-3. Render có thể tự đọc `render.yaml`. Nếu cấu hình thủ công:
-   - Build Command:
-     ```bash
-     pip install -r requirements.txt
-     ```
-   - Start Command:
-     ```bash
-     streamlit run frontend/app.py --server.address=0.0.0.0 --server.port=$PORT --server.headless=true
-     ```
-4. Thêm Environment Variable:
-   ```text
-   BACKEND_API_URL=https://your-backend.vercel.app
-   ```
-5. Deploy.
-6. Mở dashboard Render URL, sidebar sẽ hiển thị trạng thái Backend API.
-
-### Deploy trên Railway/Heroku-like
-
-Các nền tảng hỗ trợ `Procfile` có thể dùng command:
-
-```text
-web: streamlit run frontend/app.py --server.address=0.0.0.0 --server.port=$PORT --server.headless=true
-```
-
-### Deploy trên Streamlit Community Cloud
-
-1. Đẩy project lên GitHub.
-2. Chọn app file:
-   ```text
-   frontend/app.py
-   ```
-3. Streamlit sẽ cài dependencies từ `requirements.txt`.
-4. Nếu cần system packages, nền tảng sẽ đọc `packages.txt`.
-
-### Chạy local giống môi trường deploy
+### 9.6. Chạy dashboard
 
 ```bash
-set BACKEND_API_URL=https://your-backend.vercel.app
-streamlit run frontend/app.py --server.address=0.0.0.0 --server.port=8501 --server.headless=true
+streamlit run frontend/app.py
+# Mở: http://localhost:8501
 ```
 
-Git Bash/Linux/Mac:
+### 9.7. Chạy Replay IDS demo
 
 ```bash
-export BACKEND_API_URL=https://your-backend.vercel.app
-streamlit run frontend/app.py --server.address=0.0.0.0 --server.port=8501 --server.headless=true
+# Ubuntu
+PYTHONPATH=backend/src python -m ml_ddos.replay_ips --model selected_model --rows 200
+
+# Windows PowerShell
+$env:PYTHONPATH="backend\src"; python -m ml_ddos.replay_ips --model selected_model --rows 200
 ```
 
-Mở:
+### 9.8. Chạy SDN/Ryu demo (Ubuntu)
 
-```text
-http://localhost:8501
+```bash
+# Cài đặt Ryu (nếu chưa có)
+pip install ryu
+
+# Chạy controller
+PYTHONPATH=backend/src ryu-manager backend/src/ml_ddos/sdn_ryu_detector.py
+
+# Chạy Mininet (terminal khác)
+sudo mn --controller=remote --switch=ovsk --topo=tree,depth=2,fanout=3
 ```
 
-## Báo cáo và biểu đồ đã sinh
+---
 
-Tất cả kết quả được lưu trong thư mục `results/`.
+## 10. Hạn chế và hướng phát triển
 
-| File | Ý nghĩa |
-|------|--------|
-| `*_confusion_matrix.png` | Ma trận nhầm lẫn của từng mô hình |
-| `*_roc_curve.png` | Đường ROC theo từng lớp |
-| `*_feature_importance.png` | Top đặc trưng quan trọng của các mô hình cây |
-| `*_shap_summary_bar.png` | Độ quan trọng đặc trưng theo SHAP |
-| `*_shap_<class>.png` | SHAP beeswarm theo từng lớp tấn công |
-| `*_shap_force_plot.png` | Force plot cho một dự đoán cụ thể |
-| `model_comparison.png` | Biểu đồ so sánh các mô hình |
-| `*_classification_report.txt` | Báo cáo precision, recall và F1 theo từng lớp |
-| `validation_scores.csv` / `test_scores.csv` | Bảng điểm đánh giá ở định dạng CSV |
+### 10.1. Hạn chế
 
-Các mô hình đã huấn luyện được lưu trong thư mục `saved_models/` dưới dạng `.pkl`.
+1. **Dataset không hoàn toàn phản ánh traffic thực tế**: CICDDoS2019 được tạo trong môi trường lab, có thể khác với traffic production.
+2. **Một số lớp có ít mẫu**: NetBIOS (0,45%) và LDAP (1,81%) có số mẫu hạn chế, ảnh hưởng đến khả năng tổng quát hóa.
+3. **Feature extraction cho SDN**: OVS flow statistics không cung cấp đầy đủ 77 features như CICFlowMeter — nhiều features phải ước lượng bằng heuristic.
+4. **Chưa kiểm thử trên traffic thật**: Hệ thống chỉ được đánh giá trên CICDDoS2019, cần thêm đánh giá trên dữ liệu thực.
+5. **Thời gian phân loại**: Pipeline hiện tại chưa tối ưu cho real-time với lượng flow lớn (> 10.000 flow/s).
 
-## Bộ dữ liệu
+### 10.2. Hướng phát triển
 
-**CICDDoS2019** do Canadian Institute for Cybersecurity công bố.
+1. **Kiểm thử trên traffic thật**: Thu thập dữ liệu từ mạng campus/enterprise để đánh giá generalization.
+2. **Tối ưu feature extraction live**: Giảm số features cần thiết, dùng feature selection để chỉ giữ top-K features quan trọng nhất.
+3. **SDN mitigation tự động**: Khi phát hiện DDoS, controller tự động cài flow rule chặn trên switch (đã có skeleton trong `sdn_ryu_detector.py`).
+4. **Alerting**: Tích hợp cảnh báo Telegram/Email khi phát hiện tấn công.
+5. **Mở rộng dataset**: Kết hợp thêm CIC-IDS2017, UNSW-NB15 để tăng đa dạng attack patterns.
+6. **Deep Learning**: Thử nghiệm LSTM/CNN trên time-series flow features.
 
-- Nguồn dữ liệu: https://www.kaggle.com/datasets/dhoogla/cicddos2019
-- Định dạng: file Parquet, chia theo tập huấn luyện và kiểm thử cho từng loại tấn công.
-- Số đặc trưng ban đầu: 78 đặc trưng lưu lượng mạng.
-- Sau tiền xử lý: còn 32 đặc trưng, sau khi loại bỏ 12 cột chỉ có một giá trị và 33 cột tương quan cao.
+---
 
-## Quy trình tiền xử lý
+## 11. Kết luận
 
-1. **Chuẩn hóa nhãn**: đồng bộ tên nhãn giữa tập huấn luyện và tập kiểm thử.
-2. **Xóa dữ liệu trùng lặp**: loại bỏ các dòng bị lặp.
-3. **Xử lý giá trị không hợp lệ**: thay `inf` và `NaN` bằng giá trị trung vị của cột.
-4. **Loại bỏ cột một giá trị**: xóa các đặc trưng không mang thông tin phân loại.
-5. **Loại bỏ cột tương quan cao**: xóa các cột có tương quan lớn hơn 0.8.
-6. **Mã hóa nhãn**: dùng `LabelEncoder` cho 7 lớp đầu ra.
-7. **Chuẩn hóa đặc trưng**: dùng `MinMaxScaler` được khớp trên tập huấn luyện.
-8. **Chia huấn luyện/xác thực**: tách 80/20 có giữ tỉ lệ lớp.
+Đề tài đã xây dựng thành công một hệ thống phát hiện và phân loại tấn công DDoS sử dụng học máy, bao gồm:
 
-## Thước đo đánh giá
+- **Pipeline ML hoàn chỉnh**: Từ nạp dữ liệu, tiền xử lý (leakage-safe), huấn luyện với cross-validation, đến đánh giá và lưu mô hình.
+- **Xử lý vấn đề distribution shift**: Phương pháp Combine & Re-split đã loại bỏ hoàn toàn hiện tượng overfitting do source-based split của CICDDoS2019, nâng Test Macro F1 từ 0,677 lên 0,939.
+- **Mô hình đạt hiệu suất cao**: XGBoost đạt Accuracy 97,56%, Macro F1 93,86%, với Train/Test Gap chỉ 0,21%.
+- **Tương thích SDN**: Mô hình có thể được gọi bởi Ryu controller qua `predict_proba()`, hỗ trợ phát hiện DDoS trong môi trường mạng ảo.
+- **Nhiều hình thức demo**: Replay offline, Live IPS, Dashboard Streamlit, và SDN/Mininet.
 
-Mỗi mô hình được đánh giá bằng:
-
-- Accuracy, Precision, Recall và F1-score theo trung bình có trọng số.
-- Ma trận nhầm lẫn.
-- Đường ROC theo từng lớp.
-- Biểu đồ độ quan trọng đặc trưng cho các mô hình dạng cây.
-- Biểu đồ giải thích SHAP.
+Hệ thống có ý nghĩa thực tiễn trong việc hỗ trợ quản trị viên mạng phát hiện sớm các cuộc tấn công DDoS và có thể được mở rộng cho ứng dụng giám sát mạng trong môi trường SDN thực tế.
