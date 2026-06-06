@@ -105,14 +105,17 @@ def step4_generate_report(val_scores, test_scores):
         f.write(report_md)
     print(f"  Report saved: {report_path}")
 
-    # Determine best model
-    best_val = val_scores["F1-Score"].idxmax()
-    best_test = test_scores["F1-Score"].idxmax()
+    # Determine best model (column names vary by pipeline output format)
+    val_f1_col = "CV F1-Score Mean" if "CV F1-Score Mean" in val_scores.columns else "F1-Score"
+    test_f1_col = "Test F1-Score" if "Test F1-Score" in test_scores.columns else "F1-Score"
+
+    best_val = val_scores[val_f1_col].idxmax()
+    best_test = test_scores[test_f1_col].idxmax()
 
     print(f"\n  Best Model (Validation F1): {best_val} "
-          f"(F1 = {val_scores.loc[best_val, 'F1-Score']:.6f})")
+          f"(F1 = {val_scores.loc[best_val, val_f1_col]:.6f})")
     print(f"  Best Model (Test F1):       {best_test} "
-          f"(F1 = {test_scores.loc[best_test, 'F1-Score']:.6f})")
+          f"(F1 = {test_scores.loc[best_test, test_f1_col]:.6f})")
 
     return report_md
 
