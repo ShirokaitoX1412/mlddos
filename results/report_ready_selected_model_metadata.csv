@@ -1,2 +1,2 @@
 selected_model_file,best_model,class_names,accuracy,balanced_accuracy,macro_f1,weighted_f1,minority_recall,cv_macro_f1_mean,cv_macro_f1_std
-D:\source\CyRadar\VBoxShare\mlddos\saved_models\selected_model.pkl,XGBoost | baseline,Benign|LDAP Flood|MSSQL Flood|NetBIOS Flood|TCP SYN Flood|UDP Flood|UDP-Lag Flood,0.971954599445691,0.9062415095526051,0.9212608918464674,0.9712680578079336,0.7604790419161677,0.9125372742957126,0.002511358771781034
+/home/ubuntu/repos/mlddos/saved_models/selected_model.pkl,XGBoost | baseline,Benign|LDAP Flood|MSSQL Flood|NetBIOS Flood|TCP SYN Flood|UDP Flood|UDP-Lag Flood,0.9756,0.9328,0.9386,0.9751,0.9101,0.9314,0.0056
