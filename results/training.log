@@ -17,3 +17,8 @@
 2026-05-24 16:18:58,554 | INFO | Fitting final model: XGBoost
 2026-05-24 16:20:20,362 | INFO | Selected model=Extra Trees
 2026-05-24 16:20:20,362 | INFO | Artifacts saved to D:\source\CyRadar\mlddos\results and D:\source\CyRadar\mlddos\saved_models
+2026-06-03 14:32:31,704 | INFO | Starting leakage-safe DDoS training pipeline
+2026-06-03 14:32:33,656 | INFO | Training balancing disabled.
+2026-06-03 14:32:33,745 | INFO | Training rows=116870, test rows=38680, classes=['Benign', 'LDAP Flood', 'MSSQL Flood', 'NetBIOS Flood', 'TCP SYN Flood', 'UDP Flood', 'UDP-Lag Flood']
+2026-06-03 14:32:33,746 | INFO | CV strategy=StratifiedKFold
+2026-06-03 14:32:33,748 | INFO | RandomizedSearchCV: Random Forest

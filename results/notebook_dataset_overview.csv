@@ -1,0 +1,3 @@
+split,rows,columns,memory_mb,duplicate_rows,missing_values,infinite_values
+raw_train,120065,78,36.896430015563965,3195,0,0
+raw_test,38973,78,11.783806800842285,242,0,0

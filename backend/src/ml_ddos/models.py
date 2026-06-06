@@ -79,6 +79,25 @@ RANDOM_STATE = 42
 LOGGER = logging.getLogger("ml_ddos.training")
 
 
+class CappedUnderSamplingStrategy:
+    """Pickle-safe callable sampling strategy for RandomUnderSampler.
+
+    imbalanced-learn calls this object inside each CV fold with the fold labels.
+    It caps only large classes and keeps rare classes unchanged, avoiding the
+    leakage-prone pattern of computing resampling counts before cross-validation.
+    """
+
+    def __init__(self, cap: int):
+        self.cap = int(cap)
+
+    def __call__(self, y: np.ndarray) -> dict[int, int]:
+        counts = pd.Series(y).value_counts().sort_index()
+        return {
+            int(label): int(min(count, self.cap))
+            for label, count in counts.items()
+        }
+
+
 LEAKAGE_COLUMN_PATTERNS = (
     r"^label$",
     r"target",
@@ -93,6 +112,12 @@ LEAKAGE_COLUMN_PATTERNS = (
     r"source\s*ip",
     r"dst\s*ip",
     r"destination\s*ip",
+    r"src\s*port",
+    r"source\s*port",
+    r"dst\s*port",
+    r"destination\s*port",
+    r"sport",
+    r"dport",
     r"source[_\s-]*file",
     r"filename",
     r"file[_\s-]*name",
@@ -106,6 +131,10 @@ GROUP_COLUMN_PATTERNS = (
     r"source\s*ip",
     r"dst\s*ip",
     r"destination\s*ip",
+    r"src\s*port",
+    r"source\s*port",
+    r"dst\s*port",
+    r"destination\s*port",
     r"source[_\s-]*file",
     r"filename",
     r"file[_\s-]*name",
@@ -125,6 +154,9 @@ class TrainingConfig:
     max_shap_samples: int = 500
     max_learning_curve_samples: int = 25000
     overfit_gap_warning: float = 0.10
+    balance_training: bool = True
+    attack_to_benign_ratio: float = 1.0
+    max_binary_group_samples: int = 40000
 
 
 class TrafficFeaturePreprocessor(BaseEstimator, TransformerMixin):
@@ -288,11 +320,15 @@ def get_classifiers(n_classes: int = 7, random_state: int = RANDOM_STATE) -> dic
     """Base models retained for compatibility with older scripts."""
     objective = "binary:logistic" if n_classes == 2 else "multi:softprob"
     xgb_kwargs = {
-        "n_estimators": 500,
-        "max_depth": 5,
-        "learning_rate": 0.05,
-        "subsample": 0.8,
-        "colsample_bytree": 0.8,
+        "n_estimators": 400,
+        "max_depth": 4,
+        "learning_rate": 0.04,
+        "subsample": 0.7,
+        "colsample_bytree": 0.7,
+        "min_child_weight": 5,
+        "gamma": 0.1,
+        "reg_alpha": 0.01,
+        "reg_lambda": 5.0,
         "objective": objective,
         "random_state": random_state,
         "n_jobs": -1,
@@ -305,10 +341,12 @@ def get_classifiers(n_classes: int = 7, random_state: int = RANDOM_STATE) -> dic
     return {
         "Random Forest": RandomForestClassifier(
             n_estimators=300,
-            max_depth=None,
-            min_samples_leaf=2,
+            max_depth=18,
+            min_samples_split=20,
+            min_samples_leaf=8,
             max_features="sqrt",
             class_weight="balanced_subsample",
+            max_samples=0.75,
             random_state=random_state,
             n_jobs=-1,
         ),
@@ -321,8 +359,9 @@ def get_classifiers(n_classes: int = 7, random_state: int = RANDOM_STATE) -> dic
         ),
         "Extra Trees": ExtraTreesClassifier(
             n_estimators=300,
-            max_depth=None,
-            min_samples_leaf=2,
+            max_depth=18,
+            min_samples_split=20,
+            min_samples_leaf=8,
             max_features="sqrt",
             class_weight="balanced",
             random_state=random_state,
@@ -360,12 +399,20 @@ def train_and_evaluate_from_raw(
 
     LOGGER.info("Starting leakage-safe DDoS training pipeline")
     raw_train, raw_test, label_encoder, label_map = prepare_raw_splits(train_df, test_df)
+    raw_train, raw_test = remove_cross_source_feature_duplicates(raw_train, raw_test)
     X_train = raw_train.drop(columns=[TARGET_COL])
     y_train = label_encoder.transform(raw_train[TARGET_COL])
     X_test = raw_test.drop(columns=[TARGET_COL])
     y_test = label_encoder.transform(raw_test[TARGET_COL])
     class_names = [label_map[i] for i in range(len(label_map))]
 
+    X_train, y_train = balance_training_distribution(
+        X_train,
+        y_train,
+        class_names,
+        config,
+        results_dir,
+    )
     groups = infer_groups(X_train)
     cv = make_cv(y_train, groups, config)
     imbalance = write_class_balance_report(y_train, y_test, class_names, results_dir)
@@ -497,6 +544,37 @@ def prepare_raw_splits(
     return train_df.reset_index(drop=True), test_df.reset_index(drop=True), label_encoder, label_map
 
 
+def remove_cross_source_feature_duplicates(
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Remove exact feature-duplicate test rows already present in training.
+
+    This is deliberately applied after ordinary per-split duplicate removal and
+    before X/y separation. The target label is excluded from the hash, so the
+    audit catches duplicated flows even when labels disagree.
+    """
+    if TARGET_COL not in train_df.columns or TARGET_COL not in test_df.columns:
+        return train_df.reset_index(drop=True), test_df.reset_index(drop=True)
+
+    train_features = train_df.drop(columns=[TARGET_COL], errors="ignore")
+    test_features = test_df.drop(columns=[TARGET_COL], errors="ignore")
+    common_columns = [col for col in train_features.columns if col in test_features.columns]
+    if not common_columns:
+        return train_df.reset_index(drop=True), test_df.reset_index(drop=True)
+
+    train_hash = pd.util.hash_pandas_object(train_features[common_columns], index=False)
+    test_hash = pd.util.hash_pandas_object(test_features[common_columns], index=False)
+    duplicate_mask = test_hash.isin(set(train_hash.to_numpy()))
+    n_removed = int(duplicate_mask.sum())
+    if n_removed:
+        LOGGER.warning(
+            "Removed %s exact feature-duplicate rows from test set before evaluation.",
+            f"{n_removed:,}",
+        )
+    return train_df.reset_index(drop=True), test_df.loc[~duplicate_mask].reset_index(drop=True)
+
+
 def infer_groups(X: pd.DataFrame) -> pd.Series | None:
     for col in X.columns:
         normalized = re.sub(r"[_\-]+", " ", str(col).strip().lower())
@@ -515,6 +593,163 @@ def make_cv(y: np.ndarray, groups: pd.Series | None, config: TrainingConfig):
     if groups is not None and groups.nunique() >= n_splits:
         return StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=config.random_state)
     return StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=config.random_state)
+
+
+def balance_training_distribution(
+    X_train: pd.DataFrame,
+    y_train: np.ndarray,
+    class_names: list[str],
+    config: TrainingConfig,
+    results_dir: str,
+) -> tuple[pd.DataFrame, np.ndarray]:
+    """Downsample the training split to reduce benign/attack imbalance.
+
+    The test set is intentionally untouched. Balancing is applied only to the
+    training split before CV/final fitting so reported test performance remains
+    a real unseen-distribution measurement.
+    """
+    if not config.balance_training:
+        LOGGER.info("Training balancing disabled.")
+        return X_train.reset_index(drop=True), y_train
+
+    benign_indices = [idx for idx, name in enumerate(class_names) if name.lower() == "benign"]
+    if not benign_indices:
+        LOGGER.warning("Could not find Benign class; skipping binary train balancing.")
+        return X_train.reset_index(drop=True), y_train
+
+    benign_label = benign_indices[0]
+    rng = np.random.default_rng(config.random_state)
+    y_series = pd.Series(y_train, index=X_train.index)
+    benign_idx = y_series[y_series == benign_label].index.to_numpy()
+    attack_idx = y_series[y_series != benign_label].index.to_numpy()
+
+    if len(benign_idx) == 0 or len(attack_idx) == 0:
+        LOGGER.warning("Cannot balance train split because one binary group is empty.")
+        return X_train.reset_index(drop=True), y_train
+
+    benign_target = min(len(benign_idx), config.max_binary_group_samples)
+    attack_target = min(
+        len(attack_idx),
+        int(round(benign_target * config.attack_to_benign_ratio)),
+        config.max_binary_group_samples,
+    )
+    benign_sample = rng.choice(benign_idx, size=benign_target, replace=False)
+    attack_sample = stratified_attack_sample(
+        y_series,
+        attack_idx,
+        attack_target,
+        benign_label,
+        rng,
+    )
+
+    selected_idx = np.concatenate([benign_sample, attack_sample])
+    rng.shuffle(selected_idx)
+
+    before = class_distribution_frame(y_train, class_names, split="train_before_balance")
+    after_y = y_series.loc[selected_idx].to_numpy()
+    after = class_distribution_frame(after_y, class_names, split="train_after_balance")
+    pd.concat([before, after], ignore_index=True).to_csv(
+        os.path.join(results_dir, "training_balance_before_after.csv"),
+        index=False,
+    )
+
+    summary = pd.DataFrame([
+        {
+            "metric": "rows_before",
+            "value": int(len(y_train)),
+        },
+        {
+            "metric": "rows_after",
+            "value": int(len(selected_idx)),
+        },
+        {
+            "metric": "benign_before",
+            "value": int(len(benign_idx)),
+        },
+        {
+            "metric": "attack_before",
+            "value": int(len(attack_idx)),
+        },
+        {
+            "metric": "benign_after",
+            "value": int((after_y == benign_label).sum()),
+        },
+        {
+            "metric": "attack_after",
+            "value": int((after_y != benign_label).sum()),
+        },
+        {
+            "metric": "attack_to_benign_ratio_after",
+            "value": float((after_y != benign_label).sum() / max((after_y == benign_label).sum(), 1)),
+        },
+    ])
+    summary.to_csv(os.path.join(results_dir, "training_balance_summary.csv"), index=False)
+    LOGGER.info(
+        "Balanced training split: rows %s -> %s, benign=%s, attack=%s",
+        len(y_train),
+        len(selected_idx),
+        int((after_y == benign_label).sum()),
+        int((after_y != benign_label).sum()),
+    )
+    return X_train.loc[selected_idx].reset_index(drop=True), after_y
+
+
+def stratified_attack_sample(
+    y_series: pd.Series,
+    attack_idx: np.ndarray,
+    target_total: int,
+    benign_label: int,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    attack_counts = y_series.loc[attack_idx].value_counts().sort_index()
+    attack_counts = attack_counts[attack_counts.index != benign_label]
+    if target_total >= int(attack_counts.sum()):
+        return attack_idx
+
+    labels = attack_counts.index.to_numpy()
+    counts = attack_counts.to_dict()
+    base_quota = max(1, target_total // max(len(labels), 1))
+    targets = {label: min(int(counts[label]), base_quota) for label in labels}
+
+    while sum(targets.values()) < target_total:
+        remaining = {
+            label: int(counts[label]) - targets[label]
+            for label in labels
+            if int(counts[label]) > targets[label]
+        }
+        if not remaining:
+            break
+        capacity_total = sum(remaining.values())
+        leftover = target_total - sum(targets.values())
+        progressed = False
+        for label, capacity in sorted(remaining.items(), key=lambda item: item[1], reverse=True):
+            add = max(1, int(round(leftover * capacity / capacity_total)))
+            add = min(add, capacity, target_total - sum(targets.values()))
+            if add > 0:
+                targets[label] += add
+                progressed = True
+            if sum(targets.values()) >= target_total:
+                break
+        if not progressed:
+            break
+
+    sampled = []
+    for label, target in targets.items():
+        label_idx = y_series[y_series == label].index.to_numpy()
+        sampled.append(rng.choice(label_idx, size=target, replace=False))
+    return np.concatenate(sampled)
+
+
+def class_distribution_frame(y: np.ndarray, class_names: list[str], split: str) -> pd.DataFrame:
+    counts = np.bincount(y, minlength=len(class_names))
+    return pd.DataFrame(
+        {
+            "split": split,
+            "class": class_names,
+            "count": counts.astype(int),
+            "percent": counts / max(len(y), 1) * 100,
+        }
+    )
 
 
 def write_class_balance_report(
@@ -657,34 +892,39 @@ def randomized_search(
 def param_distributions(base_name: str, n_classes: int, imbalance: dict[str, Any]) -> dict[str, list[Any]]:
     if base_name == "Random Forest":
         return {
-            "model__n_estimators": [200, 400, 700],
-            "model__max_depth": [None, 12, 20, 35],
-            "model__min_samples_split": [2, 5, 10, 20],
-            "model__min_samples_leaf": [1, 2, 4, 8],
-            "model__max_features": ["sqrt", "log2", 0.5],
-            "model__class_weight": ["balanced", "balanced_subsample", None],
+            "model__n_estimators": [160, 220, 320],
+            "model__max_depth": [3, 4, 5, 6, 8],
+            "model__min_samples_split": [200, 500, 1000, 1500],
+            "model__min_samples_leaf": [100, 200, 500, 800],
+            "model__max_features": ["sqrt", "log2", 0.25, 0.4],
+            "model__class_weight": ["balanced", "balanced_subsample"],
+            "model__max_samples": [0.35, 0.45, 0.6],
+            "model__ccp_alpha": [0.001, 0.005, 0.01, 0.02],
         }
     if base_name == "Extra Trees":
         return {
-            "model__n_estimators": [200, 400, 700],
-            "model__max_depth": [None, 12, 20, 35],
-            "model__min_samples_split": [2, 5, 10, 20],
-            "model__min_samples_leaf": [1, 2, 4, 8],
-            "model__max_features": ["sqrt", "log2", 0.5],
-            "model__class_weight": ["balanced", None],
+            "model__n_estimators": [160, 220, 320],
+            "model__max_depth": [5, 7, 9, 12],
+            "model__min_samples_split": [80, 120, 200, 500],
+            "model__min_samples_leaf": [30, 40, 80, 120],
+            "model__max_features": ["sqrt", "log2", 0.25, 0.4],
+            "model__class_weight": ["balanced"],
+            "model__bootstrap": [True],
+            "model__max_samples": [0.45, 0.6, 0.75],
+            "model__ccp_alpha": [0.0, 0.0001, 0.001],
         }
     if base_name == "XGBoost":
         params = {
-            "model__n_estimators": [300, 600, 1000],
-            "model__max_depth": [3, 5, 7, 10],
-            "model__learning_rate": [0.01, 0.03, 0.05, 0.1],
-            "model__min_child_weight": [1, 3, 5, 10],
-            "model__subsample": [0.6, 0.8, 1.0],
-            "model__colsample_bytree": [0.6, 0.8, 1.0],
-            "model__gamma": [0, 0.1, 1.0],
-            "model__reg_alpha": [0, 0.001, 0.01, 0.1],
-            "model__reg_lambda": [1, 2, 5, 10],
-            "model__max_delta_step": [0, 1, 5],
+            "model__n_estimators": [160, 220, 320],
+            "model__max_depth": [2, 3],
+            "model__learning_rate": [0.01, 0.03, 0.05],
+            "model__min_child_weight": [10, 20, 25, 40],
+            "model__subsample": [0.55, 0.65, 0.75],
+            "model__colsample_bytree": [0.55, 0.65, 0.75],
+            "model__gamma": [0.5, 1.0, 2.0],
+            "model__reg_alpha": [0.1, 0.5, 1.0],
+            "model__reg_lambda": [8, 12, 20],
+            "model__max_delta_step": [1, 3, 5],
         }
         if n_classes == 2 and imbalance["is_imbalanced"]:
             params["model__scale_pos_weight"] = [1, imbalance["imbalance_ratio"]]
@@ -879,8 +1119,13 @@ def safe_roc_auc(y_true: np.ndarray, y_proba: np.ndarray | None, n_classes: int)
 def selection_score(train_metrics: dict[str, float], cv_metrics: dict[str, float]) -> float:
     overfit_penalty = max(0.0, train_metrics["f1_weighted"] - cv_metrics["cv_f1_weighted_mean"])
     stability_penalty = cv_metrics["cv_f1_weighted_std"]
-    macro_bonus = 0.15 * cv_metrics["cv_f1_macro_mean"]
-    return cv_metrics["cv_f1_weighted_mean"] + macro_bonus - overfit_penalty - stability_penalty
+    macro_bonus = 0.35 * cv_metrics["cv_f1_macro_mean"]
+    return (
+        cv_metrics["cv_f1_weighted_mean"]
+        + macro_bonus
+        - 2.0 * overfit_penalty
+        - 2.0 * stability_penalty
+    )
 
 
 def save_model(model, model_name: str, models_dir: str) -> str:

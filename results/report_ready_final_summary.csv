@@ -1,0 +1,2 @@
+total_rows,total_features_before_preprocessing,duplicates_removed_after_combine,missing_values,inf_values,best_model,accuracy,balanced_accuracy,macro_f1,weighted_f1,minority_recall,train_test_gap,cv_macro_f1_mean,cv_macro_f1_std,notes
+151536,77,4014,0,0,XGBoost | baseline,0.971954599445691,0.9062415095526051,0.9212608918464674,0.9712680578079336,0.7604790419161677,-0.0034918662606053807,0.9125372742957126,0.002511358771781034,OK

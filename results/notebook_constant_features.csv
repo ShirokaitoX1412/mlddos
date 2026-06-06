@@ -1,0 +1,13 @@
+feature,dtype,unique_count
+Bwd PSH Flags,int8,1
+Fwd URG Flags,int8,1
+Bwd URG Flags,int8,1
+FIN Flag Count,int8,1
+PSH Flag Count,int8,1
+ECE Flag Count,int8,1
+Fwd Avg Bytes/Bulk,int8,1
+Fwd Avg Packets/Bulk,int8,1
+Fwd Avg Bulk Rate,int8,1
+Bwd Avg Bytes/Bulk,int8,1
+Bwd Avg Packets/Bulk,int8,1
+Bwd Avg Bulk Rate,int8,1

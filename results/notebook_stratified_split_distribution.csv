@@ -1,0 +1,8 @@
+Label,train,test,train_percent,test_percent,train_plus_test
+Benign,41227,10307,34.01,34.01,51534
+TCP SYN Flood,38223,9556,31.53,31.53,47779
+UDP Flood,22020,5505,18.16,18.16,27525
+MSSQL Flood,9782,2446,8.07,8.07,12228
+UDP-Lag Flood,7132,1783,5.88,5.88,8915
+LDAP Flood,2178,544,1.8,1.79,2722
+NetBIOS Flood,666,167,0.55,0.55,833

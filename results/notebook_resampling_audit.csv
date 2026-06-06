@@ -1,0 +1,36 @@
+method,class,count
+before_resampling_train,Benign,41227
+before_resampling_train,LDAP Flood,2178
+before_resampling_train,MSSQL Flood,9782
+before_resampling_train,NetBIOS Flood,666
+before_resampling_train,TCP SYN Flood,38223
+before_resampling_train,UDP Flood,22020
+before_resampling_train,UDP-Lag Flood,7132
+test_unchanged,Benign,10307
+test_unchanged,LDAP Flood,544
+test_unchanged,MSSQL Flood,2446
+test_unchanged,NetBIOS Flood,167
+test_unchanged,TCP SYN Flood,9556
+test_unchanged,UDP Flood,5505
+test_unchanged,UDP-Lag Flood,1783
+after_RandomOverSampler_train_only,Benign,41227
+after_RandomOverSampler_train_only,LDAP Flood,2178
+after_RandomOverSampler_train_only,MSSQL Flood,9782
+after_RandomOverSampler_train_only,NetBIOS Flood,2000
+after_RandomOverSampler_train_only,TCP SYN Flood,38223
+after_RandomOverSampler_train_only,UDP Flood,22020
+after_RandomOverSampler_train_only,UDP-Lag Flood,7132
+after_SMOTE_train_only,Benign,41227
+after_SMOTE_train_only,LDAP Flood,2178
+after_SMOTE_train_only,MSSQL Flood,9782
+after_SMOTE_train_only,NetBIOS Flood,2000
+after_SMOTE_train_only,TCP SYN Flood,38223
+after_SMOTE_train_only,UDP Flood,22020
+after_SMOTE_train_only,UDP-Lag Flood,7132
+after_RandomUnderSampler_train_only,Benign,8000
+after_RandomUnderSampler_train_only,LDAP Flood,2178
+after_RandomUnderSampler_train_only,MSSQL Flood,8000
+after_RandomUnderSampler_train_only,NetBIOS Flood,666
+after_RandomUnderSampler_train_only,TCP SYN Flood,8000
+after_RandomUnderSampler_train_only,UDP Flood,8000
+after_RandomUnderSampler_train_only,UDP-Lag Flood,7132

@@ -1,0 +1,8 @@
+Label,source_train,source_test,source_train_percent,source_test_percent
+Benign,40980,10605,35.06,27.42
+LDAP Flood,1885,1440,1.61,3.72
+MSSQL Flood,8434,6212,7.22,16.06
+NetBIOS Flood,475,598,0.41,1.55
+TCP SYN Flood,47246,533,40.43,1.38
+UDP Flood,17795,10420,15.23,26.94
+UDP-Lag Flood,55,8872,0.05,22.94

@@ -1,0 +1,8 @@
+class,train_count,stratified_holdout_count
+Benign,41227,8246
+LDAP Flood,2178,436
+MSSQL Flood,9782,1956
+NetBIOS Flood,666,133
+TCP SYN Flood,38223,7645
+UDP Flood,22020,4404
+UDP-Lag Flood,7132,1426

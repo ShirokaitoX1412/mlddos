@@ -1,0 +1,4 @@
+method,sample_rows,outlier_rows,outlier_percent
+IQR,15000,10766,71.77333333333334
+Z-score > 3,15000,1848,12.32
+Isolation Forest,6000,647,10.783333333333333

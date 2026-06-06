@@ -1,0 +1,7 @@
+feature,status
+Flow Bytes/s,plotted
+Fwd Header Length,plotted
+Fwd Seg Size Min,plotted
+Bwd Header Length,plotted
+Fwd IAT Total,plotted
+Flow Duration,plotted

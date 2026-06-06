@@ -71,6 +71,9 @@ def step3_train_evaluate(train_df, test_df, args):
         correlation_threshold=args.correlation_threshold,
         enable_smote=not args.no_smote,
         n_jobs=args.n_jobs,
+        balance_training=not args.no_balance,
+        attack_to_benign_ratio=args.attack_to_benign_ratio,
+        max_binary_group_samples=args.max_binary_group_samples,
     )
     val_scores, test_scores = train_and_evaluate_from_raw(train_df, test_df, config=config)
 
@@ -125,6 +128,12 @@ def main():
                         help="Training-fold correlation threshold for dropping redundant features")
     parser.add_argument("--no-smote", action="store_true",
                         help="Disable SMOTE candidate pipelines")
+    parser.add_argument("--no-balance", action="store_true",
+                        help="Disable train-only benign/attack balancing")
+    parser.add_argument("--attack-to-benign-ratio", type=float, default=1.0,
+                        help="Target attack/benign ratio in the balanced training split")
+    parser.add_argument("--max-binary-group-samples", type=int, default=40000,
+                        help="Maximum samples kept for each binary group in the training split")
     parser.add_argument("--n-jobs", type=int, default=-1,
                         help="Parallel jobs for CV/search")
     args = parser.parse_args()
