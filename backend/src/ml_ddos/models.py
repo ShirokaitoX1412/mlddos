@@ -157,6 +157,7 @@ class TrainingConfig:
     balance_training: bool = True
     attack_to_benign_ratio: float = 1.0
     max_binary_group_samples: int = 40000
+    min_attack_class_samples: int = 500
 
 
 class TrafficFeaturePreprocessor(BaseEstimator, TransformerMixin):
@@ -602,7 +603,12 @@ def balance_training_distribution(
     config: TrainingConfig,
     results_dir: str,
 ) -> tuple[pd.DataFrame, np.ndarray]:
-    """Downsample the training split to reduce benign/attack imbalance.
+    """Downsample majority classes and oversample rare attack classes.
+
+    Two-stage balancing:
+    1. Downsample benign and large attack classes to ``max_binary_group_samples``.
+    2. Oversample rare attack classes (< ``min_attack_class_samples``) using
+       random duplication so every attack subtype has enough representation.
 
     The test set is intentionally untouched. Balancing is applied only to the
     training split before CV/final fitting so reported test performance remains
@@ -645,9 +651,46 @@ def balance_training_distribution(
     selected_idx = np.concatenate([benign_sample, attack_sample])
     rng.shuffle(selected_idx)
 
+    X_balanced = X_train.loc[selected_idx].reset_index(drop=True)
+    y_balanced = y_series.loc[selected_idx].to_numpy()
+
+    # Stage 2: oversample rare attack classes so each has at least
+    # min_attack_class_samples rows (random duplication, not SMOTE,
+    # to avoid synthetic artifacts on tiny populations).
+    min_samples = getattr(config, "min_attack_class_samples", 500)
+    class_counts = pd.Series(y_balanced).value_counts()
+    rare_labels = [
+        int(label) for label, count in class_counts.items()
+        if label != benign_label and count < min_samples
+    ]
+    if rare_labels:
+        extra_X_parts: list[pd.DataFrame] = []
+        extra_y_parts: list[np.ndarray] = []
+        for label in rare_labels:
+            label_mask = y_balanced == label
+            label_count = int(label_mask.sum())
+            need = min_samples - label_count
+            if need <= 0:
+                continue
+            label_indices = np.where(label_mask)[0]
+            dup_indices = rng.choice(label_indices, size=need, replace=True)
+            extra_X_parts.append(X_balanced.iloc[dup_indices])
+            extra_y_parts.append(np.full(need, label, dtype=y_balanced.dtype))
+            LOGGER.info(
+                "Oversampled rare class %s (%s): %s -> %s rows",
+                class_names[label], label, label_count, label_count + need,
+            )
+        if extra_X_parts:
+            X_balanced = pd.concat(
+                [X_balanced] + extra_X_parts, ignore_index=True,
+            )
+            y_balanced = np.concatenate([y_balanced] + extra_y_parts)
+            shuffle_idx = rng.permutation(len(y_balanced))
+            X_balanced = X_balanced.iloc[shuffle_idx].reset_index(drop=True)
+            y_balanced = y_balanced[shuffle_idx]
+
     before = class_distribution_frame(y_train, class_names, split="train_before_balance")
-    after_y = y_series.loc[selected_idx].to_numpy()
-    after = class_distribution_frame(after_y, class_names, split="train_after_balance")
+    after = class_distribution_frame(y_balanced, class_names, split="train_after_balance")
     pd.concat([before, after], ignore_index=True).to_csv(
         os.path.join(results_dir, "training_balance_before_after.csv"),
         index=False,
@@ -660,7 +703,7 @@ def balance_training_distribution(
         },
         {
             "metric": "rows_after",
-            "value": int(len(selected_idx)),
+            "value": int(len(y_balanced)),
         },
         {
             "metric": "benign_before",
@@ -672,26 +715,30 @@ def balance_training_distribution(
         },
         {
             "metric": "benign_after",
-            "value": int((after_y == benign_label).sum()),
+            "value": int((y_balanced == benign_label).sum()),
         },
         {
             "metric": "attack_after",
-            "value": int((after_y != benign_label).sum()),
+            "value": int((y_balanced != benign_label).sum()),
         },
         {
             "metric": "attack_to_benign_ratio_after",
-            "value": float((after_y != benign_label).sum() / max((after_y == benign_label).sum(), 1)),
+            "value": float((y_balanced != benign_label).sum() / max((y_balanced == benign_label).sum(), 1)),
+        },
+        {
+            "metric": "rare_classes_oversampled",
+            "value": len(rare_labels),
         },
     ])
     summary.to_csv(os.path.join(results_dir, "training_balance_summary.csv"), index=False)
     LOGGER.info(
         "Balanced training split: rows %s -> %s, benign=%s, attack=%s",
         len(y_train),
-        len(selected_idx),
-        int((after_y == benign_label).sum()),
-        int((after_y != benign_label).sum()),
+        len(y_balanced),
+        int((y_balanced == benign_label).sum()),
+        int((y_balanced != benign_label).sum()),
     )
-    return X_train.loc[selected_idx].reset_index(drop=True), after_y
+    return X_balanced, y_balanced
 
 
 def stratified_attack_sample(

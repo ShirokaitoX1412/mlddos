@@ -245,6 +245,13 @@ def protocol_name(proto: Any) -> str:
 
 
 def flow_stat_to_features(stat: Any) -> pd.DataFrame:
+    """Convert an OVS flow stat entry into a CICDDoS-like feature row.
+
+    OVS provides only aggregate counters (packet_count, byte_count, duration)
+    per unidirectional flow, so many CICFlowMeter bidirectional features are
+    estimated or left at zero.  Protocol-aware heuristics infer flag counts
+    and header lengths to give the ML model better signal.
+    """
     match = stat_match_to_dict(stat)
     packet_count = float(max(getattr(stat, "packet_count", 0), 0))
     byte_count = float(max(getattr(stat, "byte_count", 0), 0))
@@ -258,6 +265,56 @@ def flow_stat_to_features(stat: Any) -> pd.DataFrame:
     bytes_per_second = byte_count / max(duration, 1e-6)
     proto = int(match.get("ip_proto", 0) or 0)
 
+    # Estimate packet length variance (assume uniform for single-stat flows)
+    pkt_len_std = 0.0
+    pkt_len_var = 0.0
+
+    # Protocol-aware header and flag inference
+    tcp_header_len = 32.0  # typical TCP header with options
+    udp_header_len = 8.0
+    ip_header_len = 20.0
+
+    is_tcp = proto == 6
+    is_udp = proto == 17
+
+    fwd_header_length = packet_count * ip_header_len
+    if is_tcp:
+        fwd_header_length = packet_count * (ip_header_len + tcp_header_len)
+    elif is_udp:
+        fwd_header_length = packet_count * (ip_header_len + udp_header_len)
+
+    # Infer flag counts from protocol and flow characteristics
+    syn_flag_count = 0.0
+    ack_flag_count = 0.0
+    psh_flag_count = 0.0
+    fin_flag_count = 0.0
+    fwd_psh_flags = 0.0
+    if is_tcp:
+        syn_flag_count = 1.0  # at least one SYN to establish
+        ack_flag_count = max(packet_count - 1.0, 0.0)
+        if packet_count > 2 and byte_count > packet_count * tcp_header_len:
+            psh_flag_count = max(packet_count - 2.0, 0.0)
+            fwd_psh_flags = psh_flag_count
+
+    # Segment size (payload per packet, minus headers)
+    payload_per_packet = avg_size
+    if is_tcp and avg_size > tcp_header_len + ip_header_len:
+        payload_per_packet = avg_size - tcp_header_len - ip_header_len
+    elif is_udp and avg_size > udp_header_len + ip_header_len:
+        payload_per_packet = avg_size - udp_header_len - ip_header_len
+
+    seg_size_min = ip_header_len
+    if is_tcp:
+        seg_size_min = ip_header_len + tcp_header_len
+    elif is_udp:
+        seg_size_min = ip_header_len + udp_header_len
+
+    # Init window bytes heuristic
+    init_fwd_win = 65535.0 if is_tcp else 0.0
+
+    # Down/Up ratio
+    down_up_ratio = 0.0
+
     row = {column: 0.0 for column in CICDDOS_FEATURE_COLUMNS}
     row.update({
         "Protocol": proto,
@@ -269,20 +326,36 @@ def flow_stat_to_features(stat: Any) -> pd.DataFrame:
         "Fwd Packet Length Max": avg_size,
         "Fwd Packet Length Min": avg_size if packet_count else 0.0,
         "Fwd Packet Length Mean": avg_size,
+        "Fwd Packet Length Std": pkt_len_std,
         "Flow Bytes/s": bytes_per_second,
         "Flow Packets/s": packets_per_second,
+        "Flow IAT Mean": duration_us / max(packet_count - 1, 1),
+        "Flow IAT Max": duration_us,
+        "Flow IAT Min": 0.0,
+        "Fwd IAT Total": duration_us,
+        "Fwd IAT Mean": duration_us / max(packet_count - 1, 1),
+        "Fwd IAT Max": duration_us,
         "Fwd Packets/s": packets_per_second,
         "Bwd Packets/s": 0.0,
         "Packet Length Min": avg_size if packet_count else 0.0,
         "Packet Length Max": avg_size,
         "Packet Length Mean": avg_size,
+        "Packet Length Std": pkt_len_std,
+        "Packet Length Variance": pkt_len_var,
+        "FIN Flag Count": fin_flag_count,
+        "SYN Flag Count": syn_flag_count,
+        "PSH Flag Count": psh_flag_count,
+        "ACK Flag Count": ack_flag_count,
+        "Fwd PSH Flags": fwd_psh_flags,
+        "Down/Up Ratio": down_up_ratio,
         "Avg Packet Size": avg_size,
-        "Avg Fwd Segment Size": avg_size,
+        "Avg Fwd Segment Size": payload_per_packet,
         "Subflow Fwd Packets": packet_count,
         "Subflow Fwd Bytes": byte_count,
         "Fwd Act Data Packets": packet_count,
-        "Fwd Header Length": packet_count * 20.0,
-        "Fwd Seg Size Min": 20.0 if packet_count else 0.0,
+        "Fwd Header Length": fwd_header_length,
+        "Fwd Seg Size Min": seg_size_min if packet_count else 0.0,
+        "Init Fwd Win Bytes": init_fwd_win,
     })
     return pd.DataFrame([row], columns=CICDDOS_FEATURE_COLUMNS)
 

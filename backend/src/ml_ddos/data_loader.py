@@ -188,6 +188,83 @@ def load_dataset(data_dir: str = DATA_DIR):
     return train_df, test_df
 
 
+def combine_and_resplit(
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    test_size: float = 0.20,
+    random_state: int = 42,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Combine train+test, deduplicate, and stratified-resplit.
+
+    This eliminates the CICDDoS2019 source-split distribution shift
+    (e.g. UDP-Lag: 0.05% train vs 22.79% test) by creating a new
+    split where every class has proportional representation in both
+    train and test sets.
+
+    Accepts DataFrames in either raw or harmonized label format.
+    Test labels are mapped to match training labels before combining.
+
+    Parameters
+    ----------
+    train_df, test_df : pd.DataFrame
+        DataFrames with a ``Label`` column (raw or harmonized).
+    test_size : float
+        Fraction of the combined data to reserve for testing.
+    random_state : int
+        Seed for reproducibility.
+
+    Returns
+    -------
+    tuple[pd.DataFrame, pd.DataFrame]
+        (new_train_df, new_test_df) with unified label names.
+    """
+    from sklearn.model_selection import train_test_split
+
+    from .preprocessor import LABEL_HARMONIZATION_MAP
+
+    train_df = train_df.copy()
+    test_df = test_df.copy()
+
+    # Map test labels to train convention so they can be combined
+    train_labels = set(train_df["Label"].unique())
+    test_labels = set(test_df["Label"].unique())
+    unmapped = test_labels - train_labels - set(LABEL_HARMONIZATION_MAP.keys())
+    if unmapped:
+        print(f"[data_loader] Removing unmappable test labels: {unmapped}")
+        test_df = test_df[~test_df["Label"].isin(unmapped)]
+    test_df["Label"] = test_df["Label"].map(
+        lambda x: LABEL_HARMONIZATION_MAP.get(x, x)
+    )
+    test_df = test_df.dropna(subset=["Label"])
+
+    combined = pd.concat([train_df, test_df], ignore_index=True)
+
+    n_before = len(combined)
+    feature_cols = [c for c in combined.columns if c != "Label"]
+    combined = combined.drop_duplicates(subset=feature_cols, keep="first")
+    n_after = len(combined)
+    n_dropped = n_before - n_after
+    print(f"[data_loader] Combined {n_before:,} rows, dropped {n_dropped:,} "
+          f"duplicates → {n_after:,} unique rows")
+
+    new_train, new_test = train_test_split(
+        combined,
+        test_size=test_size,
+        random_state=random_state,
+        stratify=combined["Label"],
+    )
+    new_train = new_train.reset_index(drop=True)
+    new_test = new_test.reset_index(drop=True)
+
+    print(f"[data_loader] Re-split: train={len(new_train):,}, test={len(new_test):,}")
+    print(f"[data_loader] Train label distribution:\n"
+          f"{new_train['Label'].value_counts().to_string()}")
+    print(f"[data_loader] Test label distribution:\n"
+          f"{new_test['Label'].value_counts().to_string()}")
+
+    return new_train, new_test
+
+
 if __name__ == "__main__":
     train_df, test_df = load_dataset()
     print("\n=== Dataset Summary ===")

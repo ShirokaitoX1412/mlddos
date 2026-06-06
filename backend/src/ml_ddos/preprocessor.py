@@ -24,6 +24,8 @@ from sklearn.preprocessing import LabelEncoder, MinMaxScaler
 
 
 # Mapping from test-set label names → training-set label names
+# Includes identity mappings so harmonize_labels is idempotent
+# (safe to call on already-harmonized data, e.g. after combine-resplit).
 LABEL_HARMONIZATION_MAP = {
     "DrDoS_UDP": "UDP",
     "UDP-lag": "UDPLag",
@@ -32,10 +34,16 @@ LABEL_HARMONIZATION_MAP = {
     "DrDoS_NetBIOS": "NetBIOS",
     "Syn": "Syn",
     "Benign": "Benign",
+    # Identity mappings for train-convention labels
+    "UDP": "UDP",
+    "UDPLag": "UDPLag",
+    "MSSQL": "MSSQL",
+    "LDAP": "LDAP",
+    "NetBIOS": "NetBIOS",
 }
 
 # Semantic mapping: raw labels → standard DDoS category names
-# (for multi-class classification with descriptive names)
+# Includes identity mappings so the map is idempotent.
 DDOS_CATEGORY_MAP = {
     "Syn": "TCP SYN Flood",
     "UDP": "UDP Flood",
@@ -45,6 +53,14 @@ DDOS_CATEGORY_MAP = {
     "NetBIOS": "NetBIOS Flood",
     "Portmap": "Portmap Flood",
     "Benign": "Benign",
+    # Identity mappings for already-mapped labels
+    "TCP SYN Flood": "TCP SYN Flood",
+    "UDP Flood": "UDP Flood",
+    "UDP-Lag Flood": "UDP-Lag Flood",
+    "LDAP Flood": "LDAP Flood",
+    "MSSQL Flood": "MSSQL Flood",
+    "NetBIOS Flood": "NetBIOS Flood",
+    "Portmap Flood": "Portmap Flood",
 }
 
 TARGET_COL = "Label"

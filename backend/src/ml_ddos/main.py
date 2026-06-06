@@ -15,7 +15,7 @@ Usage:
 import argparse
 import os
 
-from .data_loader import load_dataset
+from .data_loader import combine_and_resplit, load_dataset
 from .models import TrainingConfig, generate_markdown_report, train_and_evaluate_from_raw
 from .paths import RESULTS_DIR as PROJECT_RESULTS_DIR
 from .preprocessor import generate_data_summary, harmonize_labels
@@ -74,6 +74,7 @@ def step3_train_evaluate(train_df, test_df, args):
         balance_training=not args.no_balance,
         attack_to_benign_ratio=args.attack_to_benign_ratio,
         max_binary_group_samples=args.max_binary_group_samples,
+        min_attack_class_samples=args.min_attack_class_samples,
     )
     val_scores, test_scores = train_and_evaluate_from_raw(train_df, test_df, config=config)
 
@@ -104,14 +105,17 @@ def step4_generate_report(val_scores, test_scores):
         f.write(report_md)
     print(f"  Report saved: {report_path}")
 
-    # Determine best model
-    best_val = val_scores["F1-Score"].idxmax()
-    best_test = test_scores["F1-Score"].idxmax()
+    # Determine best model (column names vary by pipeline output format)
+    val_f1_col = "CV F1-Score Mean" if "CV F1-Score Mean" in val_scores.columns else "F1-Score"
+    test_f1_col = "Test F1-Score" if "Test F1-Score" in test_scores.columns else "F1-Score"
+
+    best_val = val_scores[val_f1_col].idxmax()
+    best_test = test_scores[test_f1_col].idxmax()
 
     print(f"\n  Best Model (Validation F1): {best_val} "
-          f"(F1 = {val_scores.loc[best_val, 'F1-Score']:.6f})")
+          f"(F1 = {val_scores.loc[best_val, val_f1_col]:.6f})")
     print(f"  Best Model (Test F1):       {best_test} "
-          f"(F1 = {test_scores.loc[best_test, 'F1-Score']:.6f})")
+          f"(F1 = {test_scores.loc[best_test, test_f1_col]:.6f})")
 
     return report_md
 
@@ -134,6 +138,11 @@ def main():
                         help="Target attack/benign ratio in the balanced training split")
     parser.add_argument("--max-binary-group-samples", type=int, default=40000,
                         help="Maximum samples kept for each binary group in the training split")
+    parser.add_argument("--min-attack-class-samples", type=int, default=500,
+                        help="Minimum samples per attack class after oversampling rare classes")
+    parser.add_argument("--combine-resplit", action="store_true",
+                        help="Combine train+test, deduplicate, and stratified-resplit "
+                             "to eliminate CICDDoS2019 source-split distribution shift")
     parser.add_argument("--n-jobs", type=int, default=-1,
                         help="Parallel jobs for CV/search")
     args = parser.parse_args()
@@ -143,6 +152,14 @@ def main():
 
     # Step 2
     step2_profile_data(train_df, test_df)
+
+    # Optional: combine and re-split to fix distribution shift
+    if args.combine_resplit:
+        print("\n" + "#" * 60)
+        print("#  COMBINE & RE-SPLIT (fixing distribution shift)")
+        print("#" * 60)
+        train_df, test_df = combine_and_resplit(train_df, test_df)
+        step2_profile_data(train_df, test_df)
 
     if args.steps_1_2:
         print("\n" + "=" * 70)
