@@ -80,7 +80,9 @@ cells = [
         RANDOM_STATE = 42
         TEST_SIZE = 0.2
         CV_FOLDS = 3
-        CV_MAX_PER_CLASS = 3000
+        FAST_CV_MODE = True
+        CV_MAX_PER_CLASS = 1000 if FAST_CV_MODE else 3000
+        TRAIN_GAP_MAX_SAMPLES = 20000
 
         warnings.filterwarnings("ignore", category=FutureWarning)
         print("Project root:", PROJECT_ROOT)
@@ -168,6 +170,16 @@ cells = [
     code(
         """
         train_harmonized, test_harmonized = harmonize_labels(train_raw, test_raw)
+        raw_combined_df = pd.concat([train_harmonized, test_harmonized], ignore_index=True)
+        raw_class_distribution = (
+            raw_combined_df[TARGET_COL]
+            .value_counts()
+            .rename_axis("class")
+            .reset_index(name="count")
+        )
+        raw_class_distribution["percent"] = (
+            raw_class_distribution["count"] / raw_class_distribution["count"].sum() * 100
+        )
 
         cleaning_summary = pd.DataFrame(
             [
@@ -214,6 +226,9 @@ cells = [
         class_distribution["percent"] = (
             class_distribution["count"] / class_distribution["count"].sum() * 100
         )
+        print("Class distribution before cleaning:")
+        display(raw_class_distribution)
+        print("Class distribution after cleaning:")
         display(class_distribution)
 
         binary_distribution = (
@@ -438,12 +453,12 @@ cells = [
 
         def extra_trees(class_weight=None):
             return ExtraTreesClassifier(
-                n_estimators=70,
-                max_depth=7,
-                min_samples_split=450,
-                min_samples_leaf=200,
+                n_estimators=120,
+                max_depth=12,
+                min_samples_split=150,
+                min_samples_leaf=40,
                 max_features="sqrt",
-                max_samples=0.60,
+                max_samples=0.85,
                 bootstrap=True,
                 class_weight=class_weight,
                 random_state=RANDOM_STATE,
@@ -504,8 +519,8 @@ cells = [
             },
             {
                 "model": "Extra Trees",
-                "method": "baseline",
-                "pipeline": make_pipeline(extra_trees()),
+                "method": "class_weight",
+                "pipeline": make_pipeline(extra_trees(class_weight="balanced")),
             },
             {
                 "model": "KNN",
@@ -586,7 +601,15 @@ cells = [
             pipeline.fit(X_train, y_train)
             fit_seconds = time.time() - start
 
-            y_train_pred = pipeline.predict(X_train)
+            train_eval_size = min(TRAIN_GAP_MAX_SAMPLES, len(X_train))
+            train_eval_positions = np.random.RandomState(RANDOM_STATE).choice(
+                len(X_train),
+                size=train_eval_size,
+                replace=False,
+            )
+            X_train_eval = X_train.iloc[train_eval_positions]
+            y_train_eval = y_train[train_eval_positions]
+            y_train_pred = pipeline.predict(X_train_eval)
             y_test_pred = pipeline.predict(X_test)
             y_test_proba = None
             if hasattr(pipeline, "predict_proba"):
@@ -642,9 +665,9 @@ cells = [
                 "Attack Recall": attack_recall,
                 "ROC AUC Macro OvR": roc_auc_macro,
                 "ROC AUC Weighted OvR": roc_auc_weighted,
-                "Train Macro F1": f1_score(y_train, y_train_pred, average="macro", zero_division=0),
+                "Train Macro F1": f1_score(y_train_eval, y_train_pred, average="macro", zero_division=0),
                 "Test Macro F1": f1_score(y_test, y_test_pred, average="macro", zero_division=0),
-                "Train/Test Gap": f1_score(y_train, y_train_pred, average="macro", zero_division=0)
+                "Train/Test Gap": f1_score(y_train_eval, y_train_pred, average="macro", zero_division=0)
                 - f1_score(y_test, y_test_pred, average="macro", zero_division=0),
                 "Fit Seconds": fit_seconds,
             }
@@ -666,6 +689,8 @@ cells = [
 
         X_cv, y_cv = make_cv_sample(X_train, y_train)
         print("CV sample shape:", X_cv.shape)
+        print("FAST_CV_MODE:", FAST_CV_MODE, "| CV_MAX_PER_CLASS:", CV_MAX_PER_CLASS)
+        print("Train gap evaluation max samples:", TRAIN_GAP_MAX_SAMPLES)
 
         cv = StratifiedKFold(n_splits=CV_FOLDS, shuffle=True, random_state=RANDOM_STATE)
         cv_scoring = {
@@ -1122,30 +1147,42 @@ cells = [
 
         saved_figures = []
 
-        # Hình 4.1: Phân bố lớp trong bộ dữ liệu sau xử lý.
+        # Hình 4.1: Phân bố lớp trong bộ dữ liệu trước xử lý.
+        plt.figure(figsize=(10, 5))
+        raw_class_plot_df = raw_class_distribution.copy()
+        sns.barplot(data=raw_class_plot_df, x="class", y="count", color="#9A6FB0")
+        plt.title("Hình 4.1. Phân bố lớp dữ liệu trước xử lý")
+        plt.xlabel("Lớp lưu lượng")
+        plt.ylabel("Số lượng mẫu")
+        plt.xticks(rotation=35, ha="right")
+        for index, row in raw_class_plot_df.iterrows():
+            plt.text(index, row["count"], f"{int(row['count']):,}", ha="center", va="bottom", fontsize=8)
+        saved_figures.append(save_report_figure("hinh_4_1_phan_bo_lop_truoc_xu_ly.png"))
+
+        # Hình 4.2: Phân bố lớp trong bộ dữ liệu sau xử lý.
         plt.figure(figsize=(10, 5))
         class_plot_df = class_distribution.copy()
         sns.barplot(data=class_plot_df, x="class", y="count", color="#4C72B0")
-        plt.title("Phân bố lớp trong bộ dữ liệu CICDDoS2019 sau xử lý")
+        plt.title("Hình 4.2. Phân bố lớp dữ liệu sau xử lý")
         plt.xlabel("Lớp lưu lượng")
         plt.ylabel("Số lượng mẫu")
         plt.xticks(rotation=35, ha="right")
         for index, row in class_plot_df.iterrows():
             plt.text(index, row["count"], f"{int(row['count']):,}", ha="center", va="bottom", fontsize=8)
-        saved_figures.append(save_report_figure("hinh_4_1_phan_bo_lop.png"))
+        saved_figures.append(save_report_figure("hinh_4_2_phan_bo_lop_sau_xu_ly.png"))
 
-        # Phân bố nhị phân Benign/Attack.
+        # Hình 4.3: Phân bố nhị phân Benign/Attack.
         plt.figure(figsize=(6, 4))
         binary_plot_df = binary_distribution.copy()
         sns.barplot(data=binary_plot_df, x="binary_class", y="count", palette=["#55A868", "#C44E52"])
-        plt.title("Phân bố nhị phân giữa lưu lượng bình thường và tấn công")
+        plt.title("Hình 4.3. Phân bố nhị phân giữa Benign và Attack")
         plt.xlabel("Nhóm lưu lượng")
         plt.ylabel("Số lượng mẫu")
         for index, row in binary_plot_df.iterrows():
             plt.text(index, row["count"], f"{int(row['count']):,}", ha="center", va="bottom", fontsize=9)
-        saved_figures.append(save_report_figure("phan_bo_benign_attack.png"))
+        saved_figures.append(save_report_figure("hinh_4_3_phan_bo_benign_attack.png"))
 
-        # Phân bố lớp giữa tập huấn luyện và tập kiểm thử.
+        # Hình 4.4: Phân bố lớp giữa tập huấn luyện và tập kiểm thử.
         split_reset_df = split_distribution[["train", "test"]].reset_index()
         split_reset_df = split_reset_df.rename(columns={split_reset_df.columns[0]: "class"})
         split_plot_df = split_reset_df.melt(
@@ -1158,13 +1195,13 @@ cells = [
         )
         plt.figure(figsize=(11, 5))
         sns.barplot(data=split_plot_df, x="class", y="Số lượng mẫu", hue="Tập dữ liệu")
-        plt.title("Phân bố lớp giữa tập huấn luyện và tập kiểm thử")
+        plt.title("Hình 4.4. Phân bố lớp giữa tập huấn luyện và tập kiểm thử")
         plt.xlabel("Lớp lưu lượng")
         plt.ylabel("Số lượng mẫu")
         plt.xticks(rotation=35, ha="right")
-        saved_figures.append(save_report_figure("phan_bo_train_test.png"))
+        saved_figures.append(save_report_figure("hinh_4_4_phan_bo_train_test.png"))
 
-        # So sánh các metric chính giữa các mô hình.
+        # Hình 4.5: So sánh các metric chính giữa các mô hình.
         comparison_for_plot = comparison_df.copy()
         comparison_for_plot["Mô hình"] = (
             comparison_for_plot["Model"] + " - " + comparison_for_plot["Imbalance Method"]
@@ -1178,42 +1215,42 @@ cells = [
         )
         plt.figure(figsize=(12, 5))
         sns.barplot(data=metrics_plot_df, x="Mô hình", y="Giá trị", hue="Chỉ số")
-        plt.title("So sánh các chỉ số đánh giá giữa các mô hình")
+        plt.title("Hình 4.5. So sánh các chỉ số đánh giá giữa các mô hình")
         plt.xlabel("Mô hình và phương án xử lý mất cân bằng")
         plt.ylabel("Giá trị")
         plt.ylim(0, 1.05)
         plt.xticks(rotation=25, ha="right")
-        saved_figures.append(save_report_figure("so_sanh_chi_so_mo_hinh.png"))
+        saved_figures.append(save_report_figure("hinh_4_5_so_sanh_chi_so_mo_hinh.png"))
 
         # So sánh Macro F1 giữa các mô hình.
         plt.figure(figsize=(10, 4))
         macro_plot_df = comparison_for_plot.sort_values("Macro F1", ascending=False)
         sns.barplot(data=macro_plot_df, x="Mô hình", y="Macro F1", color="#8172B2")
-        plt.title("So sánh Macro F1 giữa các mô hình")
+        plt.title("Hình 4.6. So sánh Macro F1 giữa các mô hình")
         plt.xlabel("Mô hình và phương án xử lý mất cân bằng")
         plt.ylabel("Macro F1")
         plt.ylim(0, 1.05)
         plt.xticks(rotation=25, ha="right")
-        saved_figures.append(save_report_figure("so_sanh_macro_f1.png"))
+        saved_figures.append(save_report_figure("hinh_4_6_so_sanh_macro_f1.png"))
 
         # So sánh Balanced Accuracy giữa các mô hình.
         plt.figure(figsize=(10, 4))
         balanced_plot_df = comparison_for_plot.sort_values("Balanced Accuracy", ascending=False)
         sns.barplot(data=balanced_plot_df, x="Mô hình", y="Balanced Accuracy", color="#64B5CD")
-        plt.title("So sánh Balanced Accuracy giữa các mô hình")
+        plt.title("Hình 4.7. So sánh Balanced Accuracy giữa các mô hình")
         plt.xlabel("Mô hình và phương án xử lý mất cân bằng")
         plt.ylabel("Balanced Accuracy")
         plt.ylim(0, 1.05)
         plt.xticks(rotation=25, ha="right")
-        saved_figures.append(save_report_figure("so_sanh_balanced_accuracy.png"))
+        saved_figures.append(save_report_figure("hinh_4_7_so_sanh_balanced_accuracy.png"))
 
         # Confusion matrix của mô hình tốt nhất.
         plt.figure(figsize=(8, 6))
         sns.heatmap(cm_df, annot=True, fmt="d", cmap="Blues", cbar=True)
-        plt.title(f"Ma trận nhầm lẫn của mô hình tốt nhất: {best_model_key}")
+        plt.title(f"Hình 4.8. Ma trận nhầm lẫn của mô hình tốt nhất: {best_model_key}")
         plt.xlabel("Nhãn dự đoán")
         plt.ylabel("Nhãn thực tế")
-        saved_figures.append(save_report_figure("ma_tran_nham_lan_best_model.png"))
+        saved_figures.append(save_report_figure("hinh_4_8_ma_tran_nham_lan_best_model.png"))
 
         # Precision/Recall/F1 theo từng lớp của mô hình tốt nhất.
         per_class_report = report_df.loc[
@@ -1227,12 +1264,12 @@ cells = [
         )
         plt.figure(figsize=(11, 5))
         sns.barplot(data=per_class_plot_df, x="Lớp", y="Giá trị", hue="Chỉ số")
-        plt.title("Precision, Recall và F1-score theo từng lớp")
+        plt.title("Hình 4.9. Precision, Recall và F1-score theo từng lớp")
         plt.xlabel("Lớp lưu lượng")
         plt.ylabel("Giá trị")
         plt.ylim(0, 1.05)
         plt.xticks(rotation=35, ha="right")
-        saved_figures.append(save_report_figure("classification_report_theo_lop.png"))
+        saved_figures.append(save_report_figure("hinh_4_9_classification_report_theo_lop.png"))
 
         # Train/Test Gap để phân tích overfitting.
         plt.figure(figsize=(10, 4))
@@ -1240,12 +1277,12 @@ cells = [
         sns.barplot(data=gap_plot_df, x="Mô hình", y="Train/Test Gap", color="#DD8452")
         plt.axhline(0.05, color="red", linestyle="--", linewidth=1, label="Ngưỡng cảnh báo 0.05")
         plt.axhline(0.00, color="black", linestyle="-", linewidth=0.8)
-        plt.title("So sánh Train/Test Gap giữa các mô hình")
+        plt.title("Hình 4.10. So sánh Train/Test Gap giữa các mô hình")
         plt.xlabel("Mô hình và phương án xử lý mất cân bằng")
         plt.ylabel("Train/Test Macro F1 Gap")
         plt.xticks(rotation=25, ha="right")
         plt.legend()
-        saved_figures.append(save_report_figure("train_test_gap.png"))
+        saved_figures.append(save_report_figure("hinh_4_10_train_test_gap.png"))
 
         # Cross-validation Macro F1 mean/std.
         plt.figure(figsize=(10, 4))
@@ -1257,34 +1294,34 @@ cells = [
             capsize=5,
             color="#55A868",
         )
-        plt.title("Kết quả cross-validation Macro F1")
+        plt.title("Hình 4.11. Kết quả cross-validation Macro F1")
         plt.xlabel("Mô hình và phương án xử lý mất cân bằng")
         plt.ylabel("CV Macro F1 Mean")
         plt.ylim(0, 1.05)
         plt.xticks(rotation=25, ha="right")
-        saved_figures.append(save_report_figure("cross_validation_macro_f1.png"))
+        saved_figures.append(save_report_figure("hinh_4_11_cross_validation_macro_f1.png"))
 
         # Minority Recall giữa các mô hình.
         plt.figure(figsize=(10, 4))
         minority_plot_df = comparison_for_plot.sort_values("Minority Class Recall", ascending=False)
         sns.barplot(data=minority_plot_df, x="Mô hình", y="Minority Class Recall", color="#C44E52")
-        plt.title("So sánh Recall của nhóm lớp thiểu số")
+        plt.title("Hình 4.12. So sánh Recall của nhóm lớp thiểu số")
         plt.xlabel("Mô hình và phương án xử lý mất cân bằng")
         plt.ylabel("Minority Class Recall")
         plt.ylim(0, 1.05)
         plt.xticks(rotation=25, ha="right")
-        saved_figures.append(save_report_figure("minority_recall.png"))
+        saved_figures.append(save_report_figure("hinh_4_12_minority_recall.png"))
 
         # False Alarm Rate giữa các mô hình.
         plt.figure(figsize=(10, 4))
         false_alarm_plot_df = comparison_for_plot.sort_values("False Alarm Rate", ascending=True)
         sns.barplot(data=false_alarm_plot_df, x="Mô hình", y="False Alarm Rate", color="#E17C05")
-        plt.title("So sánh tỉ lệ báo động giả giữa các mô hình")
+        plt.title("Hình 4.13. So sánh tỉ lệ báo động giả giữa các mô hình")
         plt.xlabel("Mô hình và phương án xử lý mất cân bằng")
         plt.ylabel("False Alarm Rate")
         plt.ylim(0, max(0.05, false_alarm_plot_df["False Alarm Rate"].max() * 1.2))
         plt.xticks(rotation=25, ha="right")
-        saved_figures.append(save_report_figure("false_alarm_rate.png"))
+        saved_figures.append(save_report_figure("hinh_4_13_false_alarm_rate.png"))
 
         # ROC nhị phân: Benign và Attack.
         benign_index = int(np.where(label_encoder.classes_ == "Benign")[0][0])
@@ -1295,11 +1332,11 @@ cells = [
         plt.figure(figsize=(6, 5))
         plt.plot(fpr_binary, tpr_binary, label=f"AUC = {binary_auc:.4f}", color="#4C72B0")
         plt.plot([0, 1], [0, 1], linestyle="--", color="gray", linewidth=1)
-        plt.title("Đường cong ROC nhị phân Benign/Attack")
+        plt.title("Hình 4.14. Đường cong ROC nhị phân Benign/Attack")
         plt.xlabel("Tỉ lệ báo động giả")
         plt.ylabel("Tỉ lệ phát hiện đúng")
         plt.legend(loc="lower right")
-        saved_figures.append(save_report_figure("roc_binary_benign_attack.png"))
+        saved_figures.append(save_report_figure("hinh_4_14_roc_binary_benign_attack.png"))
 
         # ROC đa lớp One-vs-Rest cho mô hình tốt nhất.
         y_test_binarized = label_binarize(y_test, classes=list(range(len(class_names))))
@@ -1309,11 +1346,11 @@ cells = [
             class_auc = auc(fpr, tpr)
             plt.plot(fpr, tpr, linewidth=1.5, label=f"{class_name} (AUC={class_auc:.3f})")
         plt.plot([0, 1], [0, 1], linestyle="--", color="gray", linewidth=1)
-        plt.title(f"Đường cong ROC đa lớp của mô hình tốt nhất: {best_model_key}")
+        plt.title(f"Hình 4.15. Đường cong ROC đa lớp của mô hình tốt nhất: {best_model_key}")
         plt.xlabel("False Positive Rate")
         plt.ylabel("True Positive Rate")
         plt.legend(loc="lower right", fontsize=8)
-        saved_figures.append(save_report_figure("roc_multiclass_best_model.png"))
+        saved_figures.append(save_report_figure("hinh_4_15_roc_multiclass_best_model.png"))
 
         # ROC da lop One-vs-Rest cho tat ca mo hinh.
         plt.figure(figsize=(12, 9))
@@ -1343,33 +1380,34 @@ cells = [
             if not np.isnan(model_auc):
                 plt.plot([], [], color=color, linewidth=3, label=f"{model_key} macro AUC={model_auc:.4f}")
         plt.plot([0, 1], [0, 1], linestyle="--", color="black", linewidth=1, label="Du doan ngau nhien")
-        plt.title("Duong cong ROC da lop cho tat ca mo hinh")
+        plt.title("Hình 4.16. Đường cong ROC đa lớp cho tất cả mô hình")
         plt.xlabel("False Positive Rate")
         plt.ylabel("True Positive Rate")
         plt.xlim(-0.02, 1.02)
         plt.ylim(-0.02, 1.02)
         plt.grid(alpha=0.2)
         plt.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), fontsize=7, frameon=True)
-        saved_figures.append(save_report_figure("roc_all_models_multiclass.png"))
+        saved_figures.append(save_report_figure("hinh_4_16_roc_all_models_multiclass.png"))
 
         figures_table = pd.DataFrame(
             {
                 "Tên hình": [
-                    "Hình 4.1. Phân bố lớp trong bộ dữ liệu CICDDoS2019 sau xử lý",
-                    "Phân bố nhị phân giữa Benign và Attack",
-                    "Phân bố lớp giữa tập huấn luyện và tập kiểm thử",
-                    "So sánh các chỉ số đánh giá giữa các mô hình",
-                    "So sánh Macro F1 giữa các mô hình",
-                    "So sánh Balanced Accuracy giữa các mô hình",
-                    "Ma trận nhầm lẫn của mô hình tốt nhất",
-                    "Precision, Recall và F1-score theo từng lớp",
-                    "So sánh Train/Test Gap giữa các mô hình",
-                    "Kết quả cross-validation Macro F1",
-                    "So sánh Recall của nhóm lớp thiểu số",
-                    "So sánh tỉ lệ báo động giả giữa các mô hình",
-                    "Đường cong ROC nhị phân Benign/Attack",
-                    "Đường cong ROC đa lớp của mô hình tốt nhất",
-                    "Đường cong ROC đa lớp cho tất cả mô hình",
+                    "Hình 4.1. Phân bố lớp dữ liệu trước xử lý",
+                    "Hình 4.2. Phân bố lớp dữ liệu sau xử lý",
+                    "Hình 4.3. Phân bố nhị phân giữa Benign và Attack",
+                    "Hình 4.4. Phân bố lớp giữa tập huấn luyện và tập kiểm thử",
+                    "Hình 4.5. So sánh các chỉ số đánh giá giữa các mô hình",
+                    "Hình 4.6. So sánh Macro F1 giữa các mô hình",
+                    "Hình 4.7. So sánh Balanced Accuracy giữa các mô hình",
+                    "Hình 4.8. Ma trận nhầm lẫn của mô hình tốt nhất",
+                    "Hình 4.9. Precision, Recall và F1-score theo từng lớp",
+                    "Hình 4.10. So sánh Train/Test Gap giữa các mô hình",
+                    "Hình 4.11. Kết quả cross-validation Macro F1",
+                    "Hình 4.12. So sánh Recall của nhóm lớp thiểu số",
+                    "Hình 4.13. So sánh tỉ lệ báo động giả giữa các mô hình",
+                    "Hình 4.14. Đường cong ROC nhị phân Benign/Attack",
+                    "Hình 4.15. Đường cong ROC đa lớp của mô hình tốt nhất",
+                    "Hình 4.16. Đường cong ROC đa lớp cho tất cả mô hình",
                 ],
                 "File ảnh": [str(path) for path in saved_figures],
             }

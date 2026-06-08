@@ -1,8 +1,8 @@
-2026-06-08 10:46:36.242 - INFO - Độ chính xác (Accuracy) trên tập test: 0.9716
-2026-06-08 10:46:36.242 - INFO - Tỉ lệ báo động giả (False Alarm Rate): 0.0012
-2026-06-08 10:46:36.242 - INFO - Recall phát hiện tấn công tổng quát: 0.9962
-2026-06-08 10:46:36.242 - INFO - ROC-AUC đa lớp macro OvR: 0.9943
-2026-06-08 10:46:36.242 - INFO - Báo cáo phân loại cho XGBoost | baseline:
+2026-06-08 12:01:38.717 - INFO - Độ chính xác (Accuracy) trên tập test: 0.9716
+2026-06-08 12:01:38.717 - INFO - Tỉ lệ báo động giả (False Alarm Rate): 0.0012
+2026-06-08 12:01:38.717 - INFO - Recall phát hiện tấn công tổng quát: 0.9962
+2026-06-08 12:01:38.717 - INFO - ROC-AUC đa lớp macro OvR: 0.9943
+2026-06-08 12:01:38.717 - INFO - Báo cáo phân loại cho XGBoost | baseline:
                precision    recall  f1-score   support
 
        Benign     0.9927    0.9988    0.9957     10307

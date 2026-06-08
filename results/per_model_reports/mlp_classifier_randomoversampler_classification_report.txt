@@ -1,8 +1,8 @@
-2026-06-08 10:46:36.284 - INFO - Độ chính xác (Accuracy) trên tập test: 0.9633
-2026-06-08 10:46:36.284 - INFO - Tỉ lệ báo động giả (False Alarm Rate): 0.0022
-2026-06-08 10:46:36.284 - INFO - Recall phát hiện tấn công tổng quát: 0.9966
-2026-06-08 10:46:36.284 - INFO - ROC-AUC đa lớp macro OvR: 0.9888
-2026-06-08 10:46:36.284 - INFO - Báo cáo phân loại cho MLP Classifier | RandomOverSampler:
+2026-06-08 12:01:38.755 - INFO - Độ chính xác (Accuracy) trên tập test: 0.9633
+2026-06-08 12:01:38.755 - INFO - Tỉ lệ báo động giả (False Alarm Rate): 0.0022
+2026-06-08 12:01:38.755 - INFO - Recall phát hiện tấn công tổng quát: 0.9966
+2026-06-08 12:01:38.755 - INFO - ROC-AUC đa lớp macro OvR: 0.9888
+2026-06-08 12:01:38.755 - INFO - Báo cáo phân loại cho MLP Classifier | RandomOverSampler:
                precision    recall  f1-score   support
 
        Benign     0.9934    0.9978    0.9956     10307

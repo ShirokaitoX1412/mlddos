@@ -1,20 +1,20 @@
-2026-06-08 10:46:36.366 - INFO - Độ chính xác (Accuracy) trên tập test: 0.8974
-2026-06-08 10:46:36.366 - INFO - Tỉ lệ báo động giả (False Alarm Rate): 0.0150
-2026-06-08 10:46:36.366 - INFO - Recall phát hiện tấn công tổng quát: 0.9960
-2026-06-08 10:46:36.366 - INFO - ROC-AUC đa lớp macro OvR: 0.9807
-2026-06-08 10:46:36.366 - INFO - Báo cáo phân loại cho Extra Trees | baseline:
+2026-06-08 11:16:54.587 - INFO - Độ chính xác (Accuracy) trên tập test: 0.9617
+2026-06-08 11:16:54.587 - INFO - Tỉ lệ báo động giả (False Alarm Rate): 0.0018
+2026-06-08 11:16:54.587 - INFO - Recall phát hiện tấn công tổng quát: 0.9962
+2026-06-08 11:16:54.587 - INFO - ROC-AUC đa lớp macro OvR: 0.9903
+2026-06-08 11:16:54.587 - INFO - Báo cáo phân loại cho Extra Trees | baseline:
                precision    recall  f1-score   support
 
-       Benign     0.9922    0.9850    0.9886     10307
-   LDAP Flood     0.9040    0.7960    0.8465       544
-  MSSQL Flood     0.8608    0.7155    0.7814      2446
-NetBIOS Flood     0.0000    0.0000    0.0000       167
-TCP SYN Flood     0.8654    0.9922    0.9245      9556
-    UDP Flood     0.8143    0.9777    0.8886      5505
-UDP-Lag Flood     0.0000    0.0000    0.0000      1783
+       Benign     0.9927    0.9982    0.9954     10307
+   LDAP Flood     0.8706    0.8658    0.8682       544
+  MSSQL Flood     0.8833    0.9186    0.9006      2446
+NetBIOS Flood     1.0000    0.2695    0.4245       167
+TCP SYN Flood     0.9997    0.9844    0.9920      9556
+    UDP Flood     0.8933    0.9713    0.9306      5505
+UDP-Lag Flood     0.9457    0.7521    0.8379      1783
 
-     accuracy                         0.8974     30308
-    macro avg     0.6338    0.6380    0.6328     30308
- weighted avg     0.8439    0.8974    0.8673     30308
+     accuracy                         0.9617     30308
+    macro avg     0.9407    0.8228    0.8499     30308
+ weighted avg     0.9631    0.9617    0.9602     30308
 
 ==========================================================================================

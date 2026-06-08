@@ -1,8 +1,8 @@
-2026-06-08 10:46:36.303 - INFO - Độ chính xác (Accuracy) trên tập test: 0.9569
-2026-06-08 10:46:36.303 - INFO - Tỉ lệ báo động giả (False Alarm Rate): 0.0139
-2026-06-08 10:46:36.303 - INFO - Recall phát hiện tấn công tổng quát: 0.9966
-2026-06-08 10:46:36.303 - INFO - ROC-AUC đa lớp macro OvR: 0.9915
-2026-06-08 10:46:36.303 - INFO - Báo cáo phân loại cho Random Forest | class_weight:
+2026-06-08 12:01:38.779 - INFO - Độ chính xác (Accuracy) trên tập test: 0.9569
+2026-06-08 12:01:38.779 - INFO - Tỉ lệ báo động giả (False Alarm Rate): 0.0139
+2026-06-08 12:01:38.779 - INFO - Recall phát hiện tấn công tổng quát: 0.9966
+2026-06-08 12:01:38.779 - INFO - ROC-AUC đa lớp macro OvR: 0.9915
+2026-06-08 12:01:38.779 - INFO - Báo cáo phân loại cho Random Forest | class_weight:
                precision    recall  f1-score   support
 
        Benign     0.9934    0.9861    0.9897     10307

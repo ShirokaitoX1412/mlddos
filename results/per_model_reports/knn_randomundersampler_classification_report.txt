@@ -1,8 +1,8 @@
-2026-06-08 10:46:36.323 - INFO - Độ chính xác (Accuracy) trên tập test: 0.9291
-2026-06-08 10:46:36.323 - INFO - Tỉ lệ báo động giả (False Alarm Rate): 0.0026
-2026-06-08 10:46:36.323 - INFO - Recall phát hiện tấn công tổng quát: 0.9981
-2026-06-08 10:46:36.323 - INFO - ROC-AUC đa lớp macro OvR: 0.9699
-2026-06-08 10:46:36.323 - INFO - Báo cáo phân loại cho KNN | RandomUnderSampler:
+2026-06-08 12:01:38.823 - INFO - Độ chính xác (Accuracy) trên tập test: 0.9291
+2026-06-08 12:01:38.823 - INFO - Tỉ lệ báo động giả (False Alarm Rate): 0.0026
+2026-06-08 12:01:38.823 - INFO - Recall phát hiện tấn công tổng quát: 0.9981
+2026-06-08 12:01:38.823 - INFO - ROC-AUC đa lớp macro OvR: 0.9699
+2026-06-08 12:01:38.823 - INFO - Báo cáo phân loại cho KNN | RandomUnderSampler:
                precision    recall  f1-score   support
 
        Benign     0.9963    0.9974    0.9968     10307
