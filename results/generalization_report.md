@@ -1,6 +1,6 @@
 # Generalization Report
 
-Selected model: **Extra Trees**
+Selected model: **MLP Classifier**
 
 Selection is based on cross-validation weighted F1, macro F1, fold stability, and overfit penalty. The held-out test set is reported as an external generalization check, not as the sole selector.
 
@@ -21,18 +21,17 @@ Selection is based on cross-validation weighted F1, macro F1, fold stability, an
 
 ## Overfitting Warnings
 
-- Extra Trees: train-CV gap=0.0016, CV-test gap=0.3477. Likely causes include duplicate/near-duplicate flows, class distribution shift, or attack-source/domain shift between train and test.
-- XGBoost: train-CV gap=0.0009, CV-test gap=0.3427. Likely causes include duplicate/near-duplicate flows, class distribution shift, or attack-source/domain shift between train and test.
-- KNN: train-CV gap=0.0049, CV-test gap=0.2791. Likely causes include duplicate/near-duplicate flows, class distribution shift, or attack-source/domain shift between train and test.
-- Random Forest: train-CV gap=0.0013, CV-test gap=0.3479. Likely causes include duplicate/near-duplicate flows, class distribution shift, or attack-source/domain shift between train and test.
-- MLP Classifier: train-CV gap=0.0007, CV-test gap=0.2787. Likely causes include duplicate/near-duplicate flows, class distribution shift, or attack-source/domain shift between train and test.
+No large F1 gaps exceeded the configured threshold.
+
 
 ## Summary Table
 
 | Model | Train Accuracy | Train F1-Score | CV Accuracy Mean | CV Accuracy Std | CV F1-Score Mean | CV F1-Score Std | CV F1-Macro Mean | CV ROC-AUC Mean | Test Accuracy | Test Precision | Test Recall | Test F1-Score | Test F1-Macro | Test ROC-AUC | Overfit Gap F1 | Generalization Gap F1 | Selection Score |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Extra Trees | 0.994618 | 0.994598 | 0.993095 | 0.000255 | 0.993028 | 0.000304 | 0.878783 | 0.999858 | 0.739685 | 0.812233 | 0.739685 | 0.645347 | 0.615672 | 0.866525 | 0.001570 | 0.347681 | 1.122971 |
-| XGBoost | 0.992119 | 0.992518 | 0.991358 | 0.000232 | 0.991640 | 0.000233 | 0.879868 | 0.999876 | 0.737358 | 0.683817 | 0.737358 | 0.648907 | 0.638285 | 0.932562 | 0.000878 | 0.342733 | 1.122509 |
-| KNN | 0.996432 | 0.996428 | 0.991538 | 0.000095 | 0.991504 | 0.000145 | 0.879816 | 0.998060 | 0.746510 | 0.922959 | 0.746510 | 0.712416 | 0.668477 | 0.865474 | 0.004924 | 0.279088 | 1.118407 |
-| Random Forest | 0.994105 | 0.993983 | 0.992907 | 0.000087 | 0.992730 | 0.000091 | 0.841814 | 0.999869 | 0.739814 | 0.811988 | 0.739814 | 0.644868 | 0.615645 | 0.857130 | 0.001253 | 0.347861 | 1.117657 |
-| MLP Classifier | 0.989082 | 0.988906 | 0.988363 | 0.000409 | 0.988190 | 0.000407 | 0.820987 | 0.999452 | 0.746484 | 0.688213 | 0.746484 | 0.709449 | 0.659968 | 0.855695 | 0.000716 | 0.278741 | 1.110214 |
+| MLP Classifier | 0.970700 | 0.970125 | 0.970200 | 0.000705 | 0.969594 | 0.000670 | 0.937653 | 0.996555 | 0.974547 | 0.974909 | 0.974547 | 0.974019 | 0.937719 | 0.996866 | 0.000531 | -0.004425 | 1.295371 |
+| XGBoost | 0.968900 | 0.968502 | 0.968700 | 0.001087 | 0.968319 | 0.001098 | 0.927153 | 0.997303 | 0.972986 | 0.974251 | 0.972986 | 0.972693 | 0.923634 | 0.997275 | 0.000183 | -0.004374 | 1.290260 |
+| Extra Trees + SMOTE | 0.959113 | 0.959061 | 0.958725 | 0.001405 | 0.958746 | 0.001282 | 0.902982 | 0.995825 | 0.964379 | 0.965903 | 0.964379 | 0.964531 | 0.898869 | 0.995924 | 0.000316 | -0.005786 | 1.271593 |
+| Extra Trees | 0.958037 | 0.958184 | 0.957363 | 0.000692 | 0.957445 | 0.000624 | 0.900505 | 0.995630 | 0.963648 | 0.965293 | 0.963648 | 0.963884 | 0.897152 | 0.995952 | 0.000739 | -0.006439 | 1.269896 |
+| Random Forest | 0.956925 | 0.957610 | 0.956787 | 0.000726 | 0.957496 | 0.000644 | 0.885682 | 0.995160 | 0.961588 | 0.966048 | 0.961588 | 0.962870 | 0.869480 | 0.995444 | 0.000114 | -0.005374 | 1.265967 |
+| Random Forest + SMOTE | 0.960838 | 0.960869 | 0.957987 | 0.002526 | 0.958561 | 0.002123 | 0.893230 | 0.994805 | 0.966971 | 0.968483 | 0.966971 | 0.967105 | 0.902051 | 0.995080 | 0.002308 | -0.008543 | 1.262331 |
+| KNN | 0.992725 | 0.992690 | 0.952450 | 0.002332 | 0.951494 | 0.002276 | 0.921287 | 0.990519 | 0.952085 | 0.955575 | 0.952085 | 0.953426 | 0.918547 | 0.989940 | 0.041196 | -0.001932 | 1.187000 |

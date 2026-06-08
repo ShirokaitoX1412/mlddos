@@ -22,3 +22,32 @@
 2026-06-03 14:32:33,745 | INFO | Training rows=116870, test rows=38680, classes=['Benign', 'LDAP Flood', 'MSSQL Flood', 'NetBIOS Flood', 'TCP SYN Flood', 'UDP Flood', 'UDP-Lag Flood']
 2026-06-03 14:32:33,746 | INFO | CV strategy=StratifiedKFold
 2026-06-03 14:32:33,748 | INFO | RandomizedSearchCV: Random Forest
+2026-06-06 19:28:10,686 | INFO | Starting leakage-safe DDoS training pipeline
+2026-06-06 19:28:11,519 | INFO | Balanced training split: rows 120377 -> 80000, benign=40000, attack=40000
+2026-06-06 19:28:11,534 | INFO | Training rows=80000, test rows=30095, classes=['Benign', 'LDAP Flood', 'MSSQL Flood', 'NetBIOS Flood', 'TCP SYN Flood', 'UDP Flood', 'UDP-Lag Flood']
+2026-06-06 19:28:11,534 | INFO | CV strategy=StratifiedKFold
+2026-06-06 19:28:11,535 | INFO | RandomizedSearchCV: Random Forest
+2026-06-06 19:32:42,655 | INFO | RandomizedSearchCV: Random Forest + SMOTE
+2026-06-06 19:52:52,114 | INFO | Cross-validating baseline: KNN
+2026-06-06 20:10:50,480 | INFO | RandomizedSearchCV: Extra Trees
+2026-06-06 20:13:42,825 | INFO | RandomizedSearchCV: Extra Trees + SMOTE
+2026-06-06 20:22:01,024 | INFO | Cross-validating baseline: MLP Classifier
+2026-06-06 20:26:14,717 | INFO | RandomizedSearchCV: XGBoost
+2026-06-06 20:33:01,411 | INFO | Fitting final model: Random Forest
+2026-06-06 20:33:46,516 | INFO | Fitting final model: Random Forest + SMOTE
+2026-06-06 20:35:21,334 | INFO | Fitting final model: KNN
+2026-06-06 20:37:31,236 | INFO | Fitting final model: Extra Trees
+2026-06-06 20:38:05,054 | INFO | Fitting final model: Extra Trees + SMOTE
+2026-06-06 20:39:06,848 | INFO | Fitting final model: MLP Classifier
+2026-06-06 20:41:53,271 | INFO | Fitting final model: XGBoost
+2026-06-06 20:44:27,570 | INFO | Selected model=MLP Classifier
+2026-06-06 20:44:27,571 | INFO | Artifacts saved to D:\source\CyRadar\VBoxShare\mlddos\results and D:\source\CyRadar\VBoxShare\mlddos\saved_models
+2026-06-07 17:47:38,703 | INFO | Starting leakage-safe DDoS training pipeline
+2026-06-07 17:47:39,526 | INFO | Balanced training split: rows 120377 -> 80000, benign=40000, attack=40000
+2026-06-07 17:47:39,543 | INFO | Training rows=80000, test rows=30095, classes=['Benign', 'LDAP Flood', 'MSSQL Flood', 'NetBIOS Flood', 'TCP SYN Flood', 'UDP Flood', 'UDP-Lag Flood']
+2026-06-07 17:47:39,544 | INFO | CV strategy=StratifiedKFold
+2026-06-07 17:47:39,545 | INFO | RandomizedSearchCV: Random Forest
+2026-06-07 17:52:35,085 | INFO | RandomizedSearchCV: Random Forest + SMOTE
+2026-06-07 18:08:52,892 | INFO | Cross-validating baseline: KNN
+2026-06-07 18:10:52,572 | INFO | RandomizedSearchCV: Extra Trees
+2026-06-07 18:15:32,721 | INFO | RandomizedSearchCV: Extra Trees + SMOTE

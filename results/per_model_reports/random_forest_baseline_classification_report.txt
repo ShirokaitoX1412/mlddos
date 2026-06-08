@@ -1,0 +1,20 @@
+2026-06-08 10:46:36.343 - INFO - Độ chính xác (Accuracy) trên tập test: 0.9683
+2026-06-08 10:46:36.343 - INFO - Tỉ lệ báo động giả (False Alarm Rate): 0.0016
+2026-06-08 10:46:36.343 - INFO - Recall phát hiện tấn công tổng quát: 0.9954
+2026-06-08 10:46:36.343 - INFO - ROC-AUC đa lớp macro OvR: 0.9917
+2026-06-08 10:46:36.343 - INFO - Báo cáo phân loại cho Random Forest | baseline:
+               precision    recall  f1-score   support
+
+       Benign     0.9910    0.9984    0.9947     10307
+   LDAP Flood     0.8743    0.8695    0.8719       544
+  MSSQL Flood     0.9236    0.9636    0.9432      2446
+NetBIOS Flood     0.9820    0.6527    0.7842       167
+TCP SYN Flood     0.9997    0.9795    0.9895      9556
+    UDP Flood     0.9209    0.9840    0.9514      5505
+UDP-Lag Flood     0.9078    0.7510    0.8220      1783
+
+     accuracy                         0.9683     30308
+    macro avg     0.9428    0.8855    0.9081     30308
+ weighted avg     0.9685    0.9683    0.9675     30308
+
+==========================================================================================

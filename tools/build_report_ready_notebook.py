@@ -101,19 +101,24 @@ cells = [
         from imblearn.pipeline import Pipeline as ImbPipeline
         from imblearn.under_sampling import RandomUnderSampler
         from sklearn.base import clone
-        from sklearn.ensemble import RandomForestClassifier
+        from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier
+        from sklearn.exceptions import ConvergenceWarning
         from sklearn.metrics import (
             accuracy_score,
+            auc,
             balanced_accuracy_score,
             classification_report,
             confusion_matrix,
             f1_score,
             make_scorer,
             recall_score,
+            roc_auc_score,
+            roc_curve,
         )
         from sklearn.model_selection import StratifiedKFold, cross_validate, train_test_split
+        from sklearn.neighbors import KNeighborsClassifier
         from sklearn.neural_network import MLPClassifier
-        from sklearn.preprocessing import LabelEncoder
+        from sklearn.preprocessing import LabelEncoder, label_binarize
         from xgboost import XGBClassifier
 
         from ml_ddos.data_loader import KAGGLE_DATASET_SLUG, collect_file_paths, load_dataset
@@ -124,6 +129,8 @@ cells = [
         )
         from ml_ddos.preprocessor import TARGET_COL, harmonize_labels, remove_duplicates
         from ml_ddos.sdn_ryu_detector import CICDDOS_FEATURE_COLUMNS
+
+        warnings.filterwarnings("ignore", category=ConvergenceWarning)
 
         ipython = get_ipython()
         if ipython is not None:
@@ -417,14 +424,38 @@ cells = [
 
         def random_forest(class_weight=None):
             return RandomForestClassifier(
-                n_estimators=80,
-                max_depth=8,
-                min_samples_split=200,
-                min_samples_leaf=80,
+                n_estimators=60,
+                max_depth=6,
+                min_samples_split=400,
+                min_samples_leaf=180,
                 max_features="sqrt",
-                max_samples=0.70,
+                max_samples=0.50,
                 class_weight=class_weight,
                 random_state=RANDOM_STATE,
+                n_jobs=-1,
+            )
+
+
+        def extra_trees(class_weight=None):
+            return ExtraTreesClassifier(
+                n_estimators=70,
+                max_depth=7,
+                min_samples_split=450,
+                min_samples_leaf=200,
+                max_features="sqrt",
+                max_samples=0.60,
+                bootstrap=True,
+                class_weight=class_weight,
+                random_state=RANDOM_STATE,
+                n_jobs=-1,
+            )
+
+
+        def knn_model():
+            return KNeighborsClassifier(
+                n_neighbors=15,
+                weights="distance",
+                metric="minkowski",
                 n_jobs=-1,
             )
 
@@ -455,7 +486,7 @@ cells = [
                 learning_rate_init=0.001,
                 early_stopping=True,
                 validation_fraction=0.15,
-                max_iter=120,
+                max_iter=300,
                 random_state=RANDOM_STATE,
             )
 
@@ -470,6 +501,22 @@ cells = [
                 "model": "Random Forest",
                 "method": "class_weight",
                 "pipeline": make_pipeline(random_forest(class_weight="balanced_subsample")),
+            },
+            {
+                "model": "Extra Trees",
+                "method": "baseline",
+                "pipeline": make_pipeline(extra_trees()),
+            },
+            {
+                "model": "KNN",
+                "method": "RandomUnderSampler",
+                "pipeline": make_pipeline(
+                    knn_model(),
+                    RandomUnderSampler(
+                        sampling_strategy=CappedUnderSamplingStrategy(cap=8000),
+                        random_state=RANDOM_STATE,
+                    ),
+                ),
             },
             {
                 "model": "XGBoost",
@@ -541,6 +588,9 @@ cells = [
 
             y_train_pred = pipeline.predict(X_train)
             y_test_pred = pipeline.predict(X_test)
+            y_test_proba = None
+            if hasattr(pipeline, "predict_proba"):
+                y_test_proba = pipeline.predict_proba(X_test)
             report = classification_report(
                 y_test,
                 y_test_pred,
@@ -548,6 +598,37 @@ cells = [
                 output_dict=True,
                 zero_division=0,
             )
+            benign_index = int(np.where(label_encoder.classes_ == "Benign")[0][0])
+            benign_mask = y_test == benign_index
+            attack_mask = y_test != benign_index
+            false_alarm_rate = (
+                float(np.mean(y_test_pred[benign_mask] != benign_index))
+                if benign_mask.any()
+                else np.nan
+            )
+            attack_recall = (
+                float(np.mean(y_test_pred[attack_mask] != benign_index))
+                if attack_mask.any()
+                else np.nan
+            )
+            roc_auc_macro = np.nan
+            roc_auc_weighted = np.nan
+            if y_test_proba is not None:
+                try:
+                    roc_auc_macro = roc_auc_score(
+                        y_test,
+                        y_test_proba,
+                        multi_class="ovr",
+                        average="macro",
+                    )
+                    roc_auc_weighted = roc_auc_score(
+                        y_test,
+                        y_test_proba,
+                        multi_class="ovr",
+                        average="weighted",
+                    )
+                except ValueError:
+                    pass
 
             row = {
                 "Model": spec["model"],
@@ -557,6 +638,10 @@ cells = [
                 "Macro F1": f1_score(y_test, y_test_pred, average="macro", zero_division=0),
                 "Weighted F1": f1_score(y_test, y_test_pred, average="weighted", zero_division=0),
                 "Minority Class Recall": minority_recall_score(y_test, y_test_pred),
+                "False Alarm Rate": false_alarm_rate,
+                "Attack Recall": attack_recall,
+                "ROC AUC Macro OvR": roc_auc_macro,
+                "ROC AUC Weighted OvR": roc_auc_weighted,
                 "Train Macro F1": f1_score(y_train, y_train_pred, average="macro", zero_division=0),
                 "Test Macro F1": f1_score(y_test, y_test_pred, average="macro", zero_division=0),
                 "Train/Test Gap": f1_score(y_train, y_train_pred, average="macro", zero_division=0)
@@ -576,7 +661,7 @@ cells = [
             if not np.isnan(udp_lag_f1) and udp_lag_f1 < 0.20:
                 notes.append("UDP-Lag F1 low")
             row["Notes"] = "; ".join(notes) if notes else "OK"
-            return pipeline, row, y_test_pred, report
+            return pipeline, row, y_test_pred, y_test_proba, report
 
 
         X_cv, y_cv = make_cv_sample(X_train, y_train)
@@ -592,6 +677,7 @@ cells = [
 
         fitted_models = {}
         predictions = {}
+        probabilities = {}
         reports = {}
         comparison_rows = []
 
@@ -606,7 +692,7 @@ cells = [
                 n_jobs=1,
                 error_score="raise",
             )
-            fitted_pipeline, row, y_pred, report = evaluate_candidate(
+            fitted_pipeline, row, y_pred, y_proba, report = evaluate_candidate(
                 spec,
                 X_train,
                 y_train,
@@ -622,6 +708,7 @@ cells = [
             model_key = f"{spec['model']} | {spec['method']}"
             fitted_models[model_key] = fitted_pipeline
             predictions[model_key] = y_pred
+            probabilities[model_key] = y_proba
             reports[model_key] = report
             comparison_rows.append(row)
 
@@ -647,6 +734,9 @@ cells = [
             "Macro F1",
             "Weighted F1",
             "Minority Class Recall",
+            "False Alarm Rate",
+            "Attack Recall",
+            "ROC AUC Macro OvR",
             "Train Macro F1",
             "Test Macro F1",
             "Train/Test Gap",
@@ -668,6 +758,7 @@ cells = [
         best_model_key = f"{best_row['Model']} | {best_row['Imbalance Method']}"
         best_model = fitted_models[best_model_key]
         y_pred_best = predictions[best_model_key]
+        y_proba_best = probabilities[best_model_key]
         best_report = reports[best_model_key]
 
         print("Best model:", best_model_key)
@@ -733,7 +824,168 @@ cells = [
         plt.show()
         """
     ),
-    md("## 12. Save Results"),
+    md(
+        """
+        ## 12. Per-model Classification Reports
+
+        Cell này tạo báo cáo phân loại chi tiết cho từng mô hình theo định dạng log,
+        thuận tiện để sao chép vào báo cáo đồ án.
+        """
+    ),
+    code(
+        """
+        from datetime import datetime
+
+        per_model_report_lines = []
+        per_model_report_dir = RESULTS_DIR / "per_model_reports"
+        per_model_report_dir.mkdir(parents=True, exist_ok=True)
+
+        for _, model_row in comparison_df.sort_values("Selection Score", ascending=False).iterrows():
+            model_key = f"{model_row['Model']} | {model_row['Imbalance Method']}"
+            y_pred_model = predictions[model_key]
+            model_accuracy = accuracy_score(y_test, y_pred_model)
+            false_alarm = float(model_row["False Alarm Rate"])
+            attack_recall_value = float(model_row["Attack Recall"])
+            roc_auc_value = float(model_row["ROC AUC Macro OvR"])
+            report_text = classification_report(
+                y_test,
+                y_pred_model,
+                target_names=class_names,
+                digits=4,
+                zero_division=0,
+            )
+            timestamp_accuracy = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+            timestamp_report = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+            block = (
+                f"{timestamp_accuracy} - INFO - Độ chính xác (Accuracy) trên tập test: {model_accuracy:.4f}\\n"
+                f"{timestamp_accuracy} - INFO - Tỉ lệ báo động giả (False Alarm Rate): {false_alarm:.4f}\\n"
+                f"{timestamp_accuracy} - INFO - Recall phát hiện tấn công tổng quát: {attack_recall_value:.4f}\\n"
+                f"{timestamp_accuracy} - INFO - ROC-AUC đa lớp macro OvR: {roc_auc_value:.4f}\\n"
+                f"{timestamp_report} - INFO - Báo cáo phân loại cho {model_key}:\\n"
+                f"{report_text}\\n"
+                + "=" * 90
+                + "\\n"
+            )
+            print(block)
+            per_model_report_lines.append(block)
+
+            safe_model_name = (
+                model_key.lower()
+                .replace(" | ", "_")
+                .replace(" ", "_")
+                .replace("/", "_")
+                .replace("-", "_")
+            )
+            (per_model_report_dir / f"{safe_model_name}_classification_report.txt").write_text(
+                block,
+                encoding="utf-8",
+            )
+
+        all_reports_path = RESULTS_DIR / "report_ready_per_model_classification_reports.txt"
+        all_reports_path.write_text("\\n".join(per_model_report_lines), encoding="utf-8")
+        print("Saved all per-model reports:", all_reports_path)
+        print("Saved individual reports dir:", per_model_report_dir)
+
+        exact_one_rows = []
+        for model_key, report in reports.items():
+            for label_name in class_names:
+                label_report = report.get(label_name, {})
+                for metric_name in ["precision", "recall", "f1-score"]:
+                    metric_value = float(label_report.get(metric_name, np.nan))
+                    if metric_value == 1.0:
+                        exact_one_rows.append(
+                            {
+                                "Model": model_key,
+                                "Class": label_name,
+                                "Metric": metric_name,
+                                "Value": metric_value,
+                                "Note": "Metric is exactly 1.0 on the current test split",
+                            }
+                        )
+        exact_one_metric_audit = pd.DataFrame(exact_one_rows)
+        if exact_one_metric_audit.empty:
+            print("No exact 1.0 precision/recall/f1-score values found in per-class reports.")
+        else:
+            display(exact_one_metric_audit)
+        exact_one_metric_audit.to_csv(RESULTS_DIR / "report_ready_exact_one_metric_audit.csv", index=False)
+        """
+    ),
+    md(
+        """
+        ## 13. Expected Results Coverage Check
+
+        Cell này kiểm tra các kết quả dự kiến trong báo cáo so với phạm vi dữ liệu
+        và code thực tế. Những lớp tấn công không có trong dataset hiện tại sẽ
+        không được tuyên bố là đã phân loại trong kết quả thực nghiệm.
+        """
+    ),
+    code(
+        """
+        expected_attack_labels = [
+            "UDP Flood",
+            "ICMP Flood",
+            "TCP SYN Flood",
+            "Ping of Death",
+            "HTTP Flood",
+            "LDAP Flood",
+            "MSSQL Flood",
+            "NetBIOS Flood",
+            "UDP-Lag Flood",
+        ]
+        observed_labels = set(class_names)
+        expected_coverage_df = pd.DataFrame(
+            [
+                {
+                    "Kết quả dự kiến": "Xây dựng mô hình phát hiện DDoS bằng học máy",
+                    "Trạng thái trong code": "Đã có",
+                    "Bằng chứng": "Có pipeline huấn luyện, so sánh model và selected_model.pkl",
+                },
+                {
+                    "Kết quả dự kiến": "Kiểm soát tỉ lệ báo động giả",
+                    "Trạng thái trong code": "Đã bổ sung",
+                    "Bằng chứng": "False Alarm Rate được tính cho từng model",
+                },
+                {
+                    "Kết quả dự kiến": "Phân loại các dạng DDoS có trong dataset",
+                    "Trạng thái trong code": "Đã có trong phạm vi dataset",
+                    "Bằng chứng": ", ".join(class_names),
+                },
+                {
+                    "Kết quả dự kiến": "Trích xuất đặc trưng từ dữ liệu thô",
+                    "Trạng thái trong code": "Một phần",
+                    "Bằng chứng": "Dataset hiện dùng flow-level features đã trích xuất sẵn; SDN demo chuyển flow stats thành vector đặc trưng",
+                },
+                {
+                    "Kết quả dự kiến": "Trực quan hóa phân bố, confusion matrix, ROC",
+                    "Trạng thái trong code": "Đã bổ sung",
+                    "Bằng chứng": "report_figures chứa biểu đồ phân bố, so sánh model, confusion matrix và ROC",
+                },
+            ]
+        )
+        display(expected_coverage_df)
+
+        attack_label_coverage_df = pd.DataFrame(
+            [
+                {
+                    "Dạng tấn công trong mô tả dự kiến": label,
+                    "Có trong dataset/code hiện tại": label in observed_labels,
+                    "Ghi chú": (
+                        "Được đánh giá trong classification report"
+                        if label in observed_labels
+                        else "Không có nhãn trong dataset hiện tại, không nên ghi là đã phân loại"
+                    ),
+                }
+                for label in expected_attack_labels
+            ]
+        )
+        display(attack_label_coverage_df)
+
+        expected_coverage_df.to_csv(RESULTS_DIR / "report_ready_expected_results_coverage.csv", index=False)
+        attack_label_coverage_df.to_csv(RESULTS_DIR / "report_ready_attack_label_coverage.csv", index=False)
+        """
+    ),
+    md("## 14. Save Results"),
     code(
         """
         comparison_path = RESULTS_DIR / "report_ready_model_comparison.csv"
@@ -762,6 +1014,9 @@ cells = [
                     "macro_f1": best_row["Macro F1"],
                     "weighted_f1": best_row["Weighted F1"],
                     "minority_recall": best_row["Minority Class Recall"],
+                    "false_alarm_rate": best_row["False Alarm Rate"],
+                    "attack_recall": best_row["Attack Recall"],
+                    "roc_auc_macro_ovr": best_row["ROC AUC Macro OvR"],
                     "train_test_gap": best_row["Train/Test Gap"],
                     "cv_macro_f1_mean": best_row["CV Macro F1 Mean"],
                     "cv_macro_f1_std": best_row["CV Macro F1 Std"],
@@ -791,6 +1046,9 @@ cells = [
                     "macro_f1": best_row["Macro F1"],
                     "weighted_f1": best_row["Weighted F1"],
                     "minority_recall": best_row["Minority Class Recall"],
+                    "false_alarm_rate": best_row["False Alarm Rate"],
+                    "attack_recall": best_row["Attack Recall"],
+                    "roc_auc_macro_ovr": best_row["ROC AUC Macro OvR"],
                     "cv_macro_f1_mean": best_row["CV Macro F1 Mean"],
                     "cv_macro_f1_std": best_row["CV Macro F1 Std"],
                 }
@@ -807,7 +1065,7 @@ cells = [
         print("Saved selected model metadata:", metadata_path)
         """
     ),
-    md("## 13. SDN Controller Compatibility Check"),
+    md("## 15. SDN Controller Compatibility Check"),
     code(
         """
         with open(selected_model_path, "rb") as file:
@@ -838,7 +1096,289 @@ cells = [
         display(sdn_check)
         """
     ),
-    md("## 14. Final Conclusion"),
+    md(
+        """
+        ## 16. Report Figures
+
+        Cell này sinh các biểu đồ chính dùng để chèn vào báo cáo tốt nghiệp.
+        Tất cả biểu đồ được tạo từ dữ liệu và kết quả thực nghiệm thật trong notebook,
+        đồng thời được lưu thành ảnh PNG để có thể chèn trực tiếp vào Word.
+        """
+    ),
+    code(
+        """
+        REPORT_FIGURES_DIR = RESULTS_DIR / "report_figures"
+        REPORT_FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+
+
+        def save_report_figure(filename: str) -> Path:
+            path = REPORT_FIGURES_DIR / filename
+            plt.tight_layout()
+            plt.savefig(path, dpi=300, bbox_inches="tight")
+            plt.show()
+            print("Saved:", path)
+            return path
+
+
+        saved_figures = []
+
+        # Hình 4.1: Phân bố lớp trong bộ dữ liệu sau xử lý.
+        plt.figure(figsize=(10, 5))
+        class_plot_df = class_distribution.copy()
+        sns.barplot(data=class_plot_df, x="class", y="count", color="#4C72B0")
+        plt.title("Phân bố lớp trong bộ dữ liệu CICDDoS2019 sau xử lý")
+        plt.xlabel("Lớp lưu lượng")
+        plt.ylabel("Số lượng mẫu")
+        plt.xticks(rotation=35, ha="right")
+        for index, row in class_plot_df.iterrows():
+            plt.text(index, row["count"], f"{int(row['count']):,}", ha="center", va="bottom", fontsize=8)
+        saved_figures.append(save_report_figure("hinh_4_1_phan_bo_lop.png"))
+
+        # Phân bố nhị phân Benign/Attack.
+        plt.figure(figsize=(6, 4))
+        binary_plot_df = binary_distribution.copy()
+        sns.barplot(data=binary_plot_df, x="binary_class", y="count", palette=["#55A868", "#C44E52"])
+        plt.title("Phân bố nhị phân giữa lưu lượng bình thường và tấn công")
+        plt.xlabel("Nhóm lưu lượng")
+        plt.ylabel("Số lượng mẫu")
+        for index, row in binary_plot_df.iterrows():
+            plt.text(index, row["count"], f"{int(row['count']):,}", ha="center", va="bottom", fontsize=9)
+        saved_figures.append(save_report_figure("phan_bo_benign_attack.png"))
+
+        # Phân bố lớp giữa tập huấn luyện và tập kiểm thử.
+        split_reset_df = split_distribution[["train", "test"]].reset_index()
+        split_reset_df = split_reset_df.rename(columns={split_reset_df.columns[0]: "class"})
+        split_plot_df = split_reset_df.melt(
+            id_vars="class",
+            var_name="Tập dữ liệu",
+            value_name="Số lượng mẫu",
+        )
+        split_plot_df["Tập dữ liệu"] = split_plot_df["Tập dữ liệu"].map(
+            {"train": "Tập huấn luyện", "test": "Tập kiểm thử"}
+        )
+        plt.figure(figsize=(11, 5))
+        sns.barplot(data=split_plot_df, x="class", y="Số lượng mẫu", hue="Tập dữ liệu")
+        plt.title("Phân bố lớp giữa tập huấn luyện và tập kiểm thử")
+        plt.xlabel("Lớp lưu lượng")
+        plt.ylabel("Số lượng mẫu")
+        plt.xticks(rotation=35, ha="right")
+        saved_figures.append(save_report_figure("phan_bo_train_test.png"))
+
+        # So sánh các metric chính giữa các mô hình.
+        comparison_for_plot = comparison_df.copy()
+        comparison_for_plot["Mô hình"] = (
+            comparison_for_plot["Model"] + " - " + comparison_for_plot["Imbalance Method"]
+        )
+        metrics_to_plot = ["Accuracy", "Balanced Accuracy", "Macro F1", "Weighted F1"]
+        metrics_plot_df = comparison_for_plot.melt(
+            id_vars="Mô hình",
+            value_vars=metrics_to_plot,
+            var_name="Chỉ số",
+            value_name="Giá trị",
+        )
+        plt.figure(figsize=(12, 5))
+        sns.barplot(data=metrics_plot_df, x="Mô hình", y="Giá trị", hue="Chỉ số")
+        plt.title("So sánh các chỉ số đánh giá giữa các mô hình")
+        plt.xlabel("Mô hình và phương án xử lý mất cân bằng")
+        plt.ylabel("Giá trị")
+        plt.ylim(0, 1.05)
+        plt.xticks(rotation=25, ha="right")
+        saved_figures.append(save_report_figure("so_sanh_chi_so_mo_hinh.png"))
+
+        # So sánh Macro F1 giữa các mô hình.
+        plt.figure(figsize=(10, 4))
+        macro_plot_df = comparison_for_plot.sort_values("Macro F1", ascending=False)
+        sns.barplot(data=macro_plot_df, x="Mô hình", y="Macro F1", color="#8172B2")
+        plt.title("So sánh Macro F1 giữa các mô hình")
+        plt.xlabel("Mô hình và phương án xử lý mất cân bằng")
+        plt.ylabel("Macro F1")
+        plt.ylim(0, 1.05)
+        plt.xticks(rotation=25, ha="right")
+        saved_figures.append(save_report_figure("so_sanh_macro_f1.png"))
+
+        # So sánh Balanced Accuracy giữa các mô hình.
+        plt.figure(figsize=(10, 4))
+        balanced_plot_df = comparison_for_plot.sort_values("Balanced Accuracy", ascending=False)
+        sns.barplot(data=balanced_plot_df, x="Mô hình", y="Balanced Accuracy", color="#64B5CD")
+        plt.title("So sánh Balanced Accuracy giữa các mô hình")
+        plt.xlabel("Mô hình và phương án xử lý mất cân bằng")
+        plt.ylabel("Balanced Accuracy")
+        plt.ylim(0, 1.05)
+        plt.xticks(rotation=25, ha="right")
+        saved_figures.append(save_report_figure("so_sanh_balanced_accuracy.png"))
+
+        # Confusion matrix của mô hình tốt nhất.
+        plt.figure(figsize=(8, 6))
+        sns.heatmap(cm_df, annot=True, fmt="d", cmap="Blues", cbar=True)
+        plt.title(f"Ma trận nhầm lẫn của mô hình tốt nhất: {best_model_key}")
+        plt.xlabel("Nhãn dự đoán")
+        plt.ylabel("Nhãn thực tế")
+        saved_figures.append(save_report_figure("ma_tran_nham_lan_best_model.png"))
+
+        # Precision/Recall/F1 theo từng lớp của mô hình tốt nhất.
+        per_class_report = report_df.loc[
+            [label for label in class_names if label in report_df.index],
+            ["precision", "recall", "f1-score"],
+        ].reset_index().rename(columns={"index": "Lớp"})
+        per_class_plot_df = per_class_report.melt(
+            id_vars="Lớp",
+            var_name="Chỉ số",
+            value_name="Giá trị",
+        )
+        plt.figure(figsize=(11, 5))
+        sns.barplot(data=per_class_plot_df, x="Lớp", y="Giá trị", hue="Chỉ số")
+        plt.title("Precision, Recall và F1-score theo từng lớp")
+        plt.xlabel("Lớp lưu lượng")
+        plt.ylabel("Giá trị")
+        plt.ylim(0, 1.05)
+        plt.xticks(rotation=35, ha="right")
+        saved_figures.append(save_report_figure("classification_report_theo_lop.png"))
+
+        # Train/Test Gap để phân tích overfitting.
+        plt.figure(figsize=(10, 4))
+        gap_plot_df = comparison_for_plot.sort_values("Train/Test Gap", ascending=False)
+        sns.barplot(data=gap_plot_df, x="Mô hình", y="Train/Test Gap", color="#DD8452")
+        plt.axhline(0.05, color="red", linestyle="--", linewidth=1, label="Ngưỡng cảnh báo 0.05")
+        plt.axhline(0.00, color="black", linestyle="-", linewidth=0.8)
+        plt.title("So sánh Train/Test Gap giữa các mô hình")
+        plt.xlabel("Mô hình và phương án xử lý mất cân bằng")
+        plt.ylabel("Train/Test Macro F1 Gap")
+        plt.xticks(rotation=25, ha="right")
+        plt.legend()
+        saved_figures.append(save_report_figure("train_test_gap.png"))
+
+        # Cross-validation Macro F1 mean/std.
+        plt.figure(figsize=(10, 4))
+        cv_plot_df = comparison_for_plot.sort_values("CV Macro F1 Mean", ascending=False)
+        plt.bar(
+            cv_plot_df["Mô hình"],
+            cv_plot_df["CV Macro F1 Mean"],
+            yerr=cv_plot_df["CV Macro F1 Std"],
+            capsize=5,
+            color="#55A868",
+        )
+        plt.title("Kết quả cross-validation Macro F1")
+        plt.xlabel("Mô hình và phương án xử lý mất cân bằng")
+        plt.ylabel("CV Macro F1 Mean")
+        plt.ylim(0, 1.05)
+        plt.xticks(rotation=25, ha="right")
+        saved_figures.append(save_report_figure("cross_validation_macro_f1.png"))
+
+        # Minority Recall giữa các mô hình.
+        plt.figure(figsize=(10, 4))
+        minority_plot_df = comparison_for_plot.sort_values("Minority Class Recall", ascending=False)
+        sns.barplot(data=minority_plot_df, x="Mô hình", y="Minority Class Recall", color="#C44E52")
+        plt.title("So sánh Recall của nhóm lớp thiểu số")
+        plt.xlabel("Mô hình và phương án xử lý mất cân bằng")
+        plt.ylabel("Minority Class Recall")
+        plt.ylim(0, 1.05)
+        plt.xticks(rotation=25, ha="right")
+        saved_figures.append(save_report_figure("minority_recall.png"))
+
+        # False Alarm Rate giữa các mô hình.
+        plt.figure(figsize=(10, 4))
+        false_alarm_plot_df = comparison_for_plot.sort_values("False Alarm Rate", ascending=True)
+        sns.barplot(data=false_alarm_plot_df, x="Mô hình", y="False Alarm Rate", color="#E17C05")
+        plt.title("So sánh tỉ lệ báo động giả giữa các mô hình")
+        plt.xlabel("Mô hình và phương án xử lý mất cân bằng")
+        plt.ylabel("False Alarm Rate")
+        plt.ylim(0, max(0.05, false_alarm_plot_df["False Alarm Rate"].max() * 1.2))
+        plt.xticks(rotation=25, ha="right")
+        saved_figures.append(save_report_figure("false_alarm_rate.png"))
+
+        # ROC nhị phân: Benign và Attack.
+        benign_index = int(np.where(label_encoder.classes_ == "Benign")[0][0])
+        y_binary_attack = (y_test != benign_index).astype(int)
+        attack_score = 1.0 - y_proba_best[:, benign_index]
+        fpr_binary, tpr_binary, _ = roc_curve(y_binary_attack, attack_score)
+        binary_auc = auc(fpr_binary, tpr_binary)
+        plt.figure(figsize=(6, 5))
+        plt.plot(fpr_binary, tpr_binary, label=f"AUC = {binary_auc:.4f}", color="#4C72B0")
+        plt.plot([0, 1], [0, 1], linestyle="--", color="gray", linewidth=1)
+        plt.title("Đường cong ROC nhị phân Benign/Attack")
+        plt.xlabel("Tỉ lệ báo động giả")
+        plt.ylabel("Tỉ lệ phát hiện đúng")
+        plt.legend(loc="lower right")
+        saved_figures.append(save_report_figure("roc_binary_benign_attack.png"))
+
+        # ROC đa lớp One-vs-Rest cho mô hình tốt nhất.
+        y_test_binarized = label_binarize(y_test, classes=list(range(len(class_names))))
+        plt.figure(figsize=(8, 6))
+        for class_idx, class_name in enumerate(class_names):
+            fpr, tpr, _ = roc_curve(y_test_binarized[:, class_idx], y_proba_best[:, class_idx])
+            class_auc = auc(fpr, tpr)
+            plt.plot(fpr, tpr, linewidth=1.5, label=f"{class_name} (AUC={class_auc:.3f})")
+        plt.plot([0, 1], [0, 1], linestyle="--", color="gray", linewidth=1)
+        plt.title(f"Đường cong ROC đa lớp của mô hình tốt nhất: {best_model_key}")
+        plt.xlabel("False Positive Rate")
+        plt.ylabel("True Positive Rate")
+        plt.legend(loc="lower right", fontsize=8)
+        saved_figures.append(save_report_figure("roc_multiclass_best_model.png"))
+
+        # ROC da lop One-vs-Rest cho tat ca mo hinh.
+        plt.figure(figsize=(12, 9))
+        model_palette = sns.color_palette("tab10", n_colors=max(1, len(probabilities)))
+        class_linestyles = ["-", "--", "-.", ":", (0, (3, 1, 1, 1)), (0, (5, 2)), (0, (1, 1))]
+        auc_by_model_key = {
+            f"{row['Model']} | {row['Imbalance Method']}": row["ROC AUC Macro OvR"]
+            for _, row in comparison_df.iterrows()
+        }
+        for model_idx, (model_key, model_proba) in enumerate(probabilities.items()):
+            if model_proba is None:
+                continue
+            color = model_palette[model_idx % len(model_palette)]
+            for class_idx, class_name in enumerate(class_names):
+                fpr, tpr, _ = roc_curve(y_test_binarized[:, class_idx], model_proba[:, class_idx])
+                class_auc = auc(fpr, tpr)
+                plt.plot(
+                    fpr,
+                    tpr,
+                    linewidth=1.2,
+                    alpha=0.78,
+                    color=color,
+                    linestyle=class_linestyles[class_idx % len(class_linestyles)],
+                    label=f"{model_key} - {class_name} (AUC={class_auc:.3f})",
+                )
+            model_auc = auc_by_model_key.get(model_key, np.nan)
+            if not np.isnan(model_auc):
+                plt.plot([], [], color=color, linewidth=3, label=f"{model_key} macro AUC={model_auc:.4f}")
+        plt.plot([0, 1], [0, 1], linestyle="--", color="black", linewidth=1, label="Du doan ngau nhien")
+        plt.title("Duong cong ROC da lop cho tat ca mo hinh")
+        plt.xlabel("False Positive Rate")
+        plt.ylabel("True Positive Rate")
+        plt.xlim(-0.02, 1.02)
+        plt.ylim(-0.02, 1.02)
+        plt.grid(alpha=0.2)
+        plt.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), fontsize=7, frameon=True)
+        saved_figures.append(save_report_figure("roc_all_models_multiclass.png"))
+
+        figures_table = pd.DataFrame(
+            {
+                "Tên hình": [
+                    "Hình 4.1. Phân bố lớp trong bộ dữ liệu CICDDoS2019 sau xử lý",
+                    "Phân bố nhị phân giữa Benign và Attack",
+                    "Phân bố lớp giữa tập huấn luyện và tập kiểm thử",
+                    "So sánh các chỉ số đánh giá giữa các mô hình",
+                    "So sánh Macro F1 giữa các mô hình",
+                    "So sánh Balanced Accuracy giữa các mô hình",
+                    "Ma trận nhầm lẫn của mô hình tốt nhất",
+                    "Precision, Recall và F1-score theo từng lớp",
+                    "So sánh Train/Test Gap giữa các mô hình",
+                    "Kết quả cross-validation Macro F1",
+                    "So sánh Recall của nhóm lớp thiểu số",
+                    "So sánh tỉ lệ báo động giả giữa các mô hình",
+                    "Đường cong ROC nhị phân Benign/Attack",
+                    "Đường cong ROC đa lớp của mô hình tốt nhất",
+                    "Đường cong ROC đa lớp cho tất cả mô hình",
+                ],
+                "File ảnh": [str(path) for path in saved_figures],
+            }
+        )
+        display(figures_table)
+        figures_table.to_csv(REPORT_FIGURES_DIR / "danh_muc_hinh_sinh_tu_notebook.csv", index=False)
+        """
+    ),
+    md("## 17. Final Conclusion"),
     code(
         """
         conclusion = f'''

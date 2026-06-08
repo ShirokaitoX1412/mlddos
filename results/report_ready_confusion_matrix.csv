@@ -1,8 +1,8 @@
 ,Benign,LDAP Flood,MSSQL Flood,NetBIOS Flood,TCP SYN Flood,UDP Flood,UDP-Lag Flood
-Benign,10295,0,0,7,0,0,4
-LDAP Flood,3,485,55,0,0,0,0
-MSSQL Flood,0,56,2342,0,0,18,1
-NetBIOS Flood,4,0,4,127,0,2,0
-TCP SYN Flood,45,0,10,0,9425,5,69
-UDP Flood,3,1,43,3,1,5392,0
-UDP-Lag Flood,9,8,3,0,0,379,1296
+Benign,10295,0,0,8,0,0,4
+LDAP Flood,4,483,57,0,0,0,0
+MSSQL Flood,1,63,2368,0,0,14,0
+NetBIOS Flood,7,1,30,127,0,2,0
+TCP SYN Flood,58,0,12,0,9425,6,55
+UDP Flood,1,0,93,2,1,5408,0
+UDP-Lag Flood,5,14,4,0,2,417,1341

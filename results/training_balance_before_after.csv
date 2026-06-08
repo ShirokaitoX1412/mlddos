@@ -1,0 +1,15 @@
+split,class,count,percent
+train_before_balance,Benign,41225,34.24657534246575
+train_before_balance,LDAP Flood,2174,1.8059928391636275
+train_before_balance,MSSQL Flood,9667,8.030603852895487
+train_before_balance,NetBIOS Flood,547,0.4544057419606735
+train_before_balance,TCP SYN Flood,38213,31.744436229512278
+train_before_balance,UDP Flood,21770,18.084850095948564
+train_before_balance,UDP-Lag Flood,6781,5.633135898053615
+train_after_balance,Benign,40000,50.0
+train_after_balance,LDAP Flood,2174,2.7175000000000002
+train_after_balance,MSSQL Flood,7306,9.1325
+train_after_balance,NetBIOS Flood,547,0.68375
+train_after_balance,TCP SYN Flood,13395,16.74375
+train_after_balance,UDP Flood,9888,12.36
+train_after_balance,UDP-Lag Flood,6690,8.3625

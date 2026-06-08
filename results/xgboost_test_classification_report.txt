@@ -2,14 +2,14 @@ Classification Report: XGBoost - test
 ================================================================================
                precision    recall  f1-score   support
 
-       Benign       0.62      1.00      0.76     10605
-   LDAP Flood       0.76      0.97      0.85      1440
-  MSSQL Flood       0.92      0.94      0.93      6212
-NetBIOS Flood       0.94      0.69      0.80       598
-TCP SYN Flood       0.20      0.24      0.22       533
-    UDP Flood       0.83      0.97      0.89     10420
-UDP-Lag Flood       0.42      0.00      0.01      8872
+       Benign       0.99      1.00      1.00     10306
+   LDAP Flood       0.78      0.97      0.87       543
+  MSSQL Flood       0.95      0.94      0.95      2417
+NetBIOS Flood       0.77      0.97      0.86       137
+TCP SYN Flood       1.00      0.99      0.99      9554
+    UDP Flood       0.93      0.98      0.96      5443
+UDP-Lag Flood       0.95      0.77      0.85      1695
 
-     accuracy                           0.74     38680
-    macro avg       0.67      0.69      0.64     38680
- weighted avg       0.68      0.74      0.65     38680
+     accuracy                           0.97     30095
+    macro avg       0.91      0.94      0.92     30095
+ weighted avg       0.97      0.97      0.97     30095

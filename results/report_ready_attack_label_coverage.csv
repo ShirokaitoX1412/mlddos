@@ -1,0 +1,10 @@
+Dạng tấn công trong mô tả dự kiến,Có trong dataset/code hiện tại,Ghi chú
+UDP Flood,True,Được đánh giá trong classification report
+ICMP Flood,False,"Không có nhãn trong dataset hiện tại, không nên ghi là đã phân loại"
+TCP SYN Flood,True,Được đánh giá trong classification report
+Ping of Death,False,"Không có nhãn trong dataset hiện tại, không nên ghi là đã phân loại"
+HTTP Flood,False,"Không có nhãn trong dataset hiện tại, không nên ghi là đã phân loại"
+LDAP Flood,True,Được đánh giá trong classification report
+MSSQL Flood,True,Được đánh giá trong classification report
+NetBIOS Flood,True,Được đánh giá trong classification report
+UDP-Lag Flood,True,Được đánh giá trong classification report

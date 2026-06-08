@@ -2,14 +2,14 @@ Classification Report: Extra Trees - test
 ================================================================================
                precision    recall  f1-score   support
 
-       Benign       0.59      1.00      0.75     10605
-   LDAP Flood       0.86      0.96      0.90      1440
-  MSSQL Flood       0.94      0.97      0.95      6212
-NetBIOS Flood       1.00      0.68      0.81       598
-TCP SYN Flood       0.00      0.00      0.00       533
-    UDP Flood       0.83      0.98      0.90     10420
-UDP-Lag Flood       1.00      0.00      0.00      8872
+       Benign       0.99      0.98      0.99     10306
+   LDAP Flood       0.79      0.96      0.86       543
+  MSSQL Flood       0.90      0.95      0.92      2417
+NetBIOS Flood       0.62      0.97      0.75       137
+TCP SYN Flood       1.00      0.98      0.99      9554
+    UDP Flood       0.94      0.96      0.95      5443
+UDP-Lag Flood       0.86      0.77      0.81      1695
 
-     accuracy                           0.74     38680
-    macro avg       0.74      0.66      0.62     38680
- weighted avg       0.81      0.74      0.65     38680
+     accuracy                           0.96     30095
+    macro avg       0.87      0.94      0.90     30095
+ weighted avg       0.97      0.96      0.96     30095

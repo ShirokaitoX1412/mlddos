@@ -1,0 +1,16 @@
+Tên hình,File ảnh
+Hình 4.1. Phân bố lớp trong bộ dữ liệu CICDDoS2019 sau xử lý,D:\source\CyRadar\VBoxShare\mlddos\results\report_figures\hinh_4_1_phan_bo_lop.png
+Phân bố nhị phân giữa Benign và Attack,D:\source\CyRadar\VBoxShare\mlddos\results\report_figures\phan_bo_benign_attack.png
+Phân bố lớp giữa tập huấn luyện và tập kiểm thử,D:\source\CyRadar\VBoxShare\mlddos\results\report_figures\phan_bo_train_test.png
+So sánh các chỉ số đánh giá giữa các mô hình,D:\source\CyRadar\VBoxShare\mlddos\results\report_figures\so_sanh_chi_so_mo_hinh.png
+So sánh Macro F1 giữa các mô hình,D:\source\CyRadar\VBoxShare\mlddos\results\report_figures\so_sanh_macro_f1.png
+So sánh Balanced Accuracy giữa các mô hình,D:\source\CyRadar\VBoxShare\mlddos\results\report_figures\so_sanh_balanced_accuracy.png
+Ma trận nhầm lẫn của mô hình tốt nhất,D:\source\CyRadar\VBoxShare\mlddos\results\report_figures\ma_tran_nham_lan_best_model.png
+"Precision, Recall và F1-score theo từng lớp",D:\source\CyRadar\VBoxShare\mlddos\results\report_figures\classification_report_theo_lop.png
+So sánh Train/Test Gap giữa các mô hình,D:\source\CyRadar\VBoxShare\mlddos\results\report_figures\train_test_gap.png
+Kết quả cross-validation Macro F1,D:\source\CyRadar\VBoxShare\mlddos\results\report_figures\cross_validation_macro_f1.png
+So sánh Recall của nhóm lớp thiểu số,D:\source\CyRadar\VBoxShare\mlddos\results\report_figures\minority_recall.png
+So sánh tỉ lệ báo động giả giữa các mô hình,D:\source\CyRadar\VBoxShare\mlddos\results\report_figures\false_alarm_rate.png
+Đường cong ROC nhị phân Benign/Attack,D:\source\CyRadar\VBoxShare\mlddos\results\report_figures\roc_binary_benign_attack.png
+Đường cong ROC đa lớp của mô hình tốt nhất,D:\source\CyRadar\VBoxShare\mlddos\results\report_figures\roc_multiclass_best_model.png
+Đường cong ROC đa lớp cho tất cả mô hình,D:\source\CyRadar\VBoxShare\mlddos\results\report_figures\roc_all_models_multiclass.png

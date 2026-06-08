@@ -1,0 +1,20 @@
+2026-06-08 10:46:36.261 - INFO - Độ chính xác (Accuracy) trên tập test: 0.9680
+2026-06-08 10:46:36.261 - INFO - Tỉ lệ báo động giả (False Alarm Rate): 0.0034
+2026-06-08 10:46:36.261 - INFO - Recall phát hiện tấn công tổng quát: 0.9965
+2026-06-08 10:46:36.261 - INFO - ROC-AUC đa lớp macro OvR: 0.9939
+2026-06-08 10:46:36.261 - INFO - Báo cáo phân loại cho XGBoost | RandomUnderSampler:
+               precision    recall  f1-score   support
+
+       Benign     0.9931    0.9966    0.9949     10307
+   LDAP Flood     0.8650    0.8952    0.8799       544
+  MSSQL Flood     0.9082    0.9751    0.9405      2446
+NetBIOS Flood     0.8951    0.7665    0.8258       167
+TCP SYN Flood     0.9997    0.9794    0.9894      9556
+    UDP Flood     0.9276    0.9746    0.9505      5505
+UDP-Lag Flood     0.9018    0.7521    0.8202      1783
+
+     accuracy                         0.9680     30308
+    macro avg     0.9272    0.9056    0.9144     30308
+ weighted avg     0.9682    0.9680    0.9674     30308
+
+==========================================================================================
