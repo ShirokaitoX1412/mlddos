@@ -1389,6 +1389,40 @@ cells = [
         plt.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), fontsize=7, frameon=True)
         saved_figures.append(save_report_figure("hinh_4_16_roc_all_models_multiclass.png"))
 
+        # Hình 4.17: So sánh phân phối nhãn thực tế và nhãn dự đoán.
+        actual_distribution = pd.Series(
+            label_encoder.inverse_transform(y_test),
+            name="Nhãn thực tế",
+        ).value_counts().reindex(class_names, fill_value=0)
+        predicted_distribution = pd.Series(
+            label_encoder.inverse_transform(y_pred_best),
+            name="Nhãn dự đoán",
+        ).value_counts().reindex(class_names, fill_value=0)
+        actual_pred_plot_df = pd.DataFrame(
+            {
+                "Lớp lưu lượng": class_names,
+                "Thực tế": actual_distribution.values,
+                "Dự đoán": predicted_distribution.values,
+            }
+        ).melt(
+            id_vars="Lớp lưu lượng",
+            var_name="Loại nhãn",
+            value_name="Số lượng mẫu",
+        )
+        plt.figure(figsize=(11, 5))
+        sns.barplot(
+            data=actual_pred_plot_df,
+            x="Lớp lưu lượng",
+            y="Số lượng mẫu",
+            hue="Loại nhãn",
+            palette=["#4C72B0", "#DD8452"],
+        )
+        plt.title(f"Hình 4.17. So sánh phân phối nhãn thực tế và nhãn dự đoán của {best_model_key}")
+        plt.xlabel("Lớp lưu lượng")
+        plt.ylabel("Số lượng mẫu")
+        plt.xticks(rotation=35, ha="right")
+        saved_figures.append(save_report_figure("hinh_4_17_phan_phoi_thuc_te_du_doan.png"))
+
         figures_table = pd.DataFrame(
             {
                 "Tên hình": [
@@ -1408,6 +1442,7 @@ cells = [
                     "Hình 4.14. Đường cong ROC nhị phân Benign/Attack",
                     "Hình 4.15. Đường cong ROC đa lớp của mô hình tốt nhất",
                     "Hình 4.16. Đường cong ROC đa lớp cho tất cả mô hình",
+                    "Hình 4.17. So sánh phân phối nhãn thực tế và nhãn dự đoán",
                 ],
                 "File ảnh": [str(path) for path in saved_figures],
             }

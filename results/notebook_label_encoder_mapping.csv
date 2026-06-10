@@ -1,8 +1,0 @@
-encoded_label,original_label
-0,Benign
-1,LDAP Flood
-2,MSSQL Flood
-3,NetBIOS Flood
-4,TCP SYN Flood
-5,UDP Flood
-6,UDP-Lag Flood

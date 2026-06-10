@@ -2,9 +2,9 @@
 app.py - Professional Streamlit Dashboard for DDoS IPS
 
 Dark-mode, high-tech UI with:
-  - Analytics Tab: Model comparison, ROC curves, SHAP explanations
+  - Analytics Tab: Model comparison, ROC curves, report figures
   - Live Monitor Tab: Real-time traffic log with RED attack alerts
-  - Settings Tab: Telegram integration for instant attack alerts
+  - Settings Tab: local IDS/IPS simulation controls
 
 Usage:
     streamlit run app.py
@@ -160,36 +160,47 @@ def _highlight_metric_columns(df: pd.DataFrame) -> list[str]:
             cols.append(col)
     return cols
 
-# ─── Helper: Telegram Sender ─────────────────────────────────────────
-def _send_telegram(token: str, chat_id: str, message: str, parse_mode: str = "HTML",
-                   disable_notification: bool = False, timeout: int = 5) -> dict:
-    """Send a Telegram message. Safe no-op when token/chat_id missing.
 
-    Returns a dict with keys: success (bool), status_code (int|None), response/error.
-    """
-    if not token or not chat_id:
-        return {"success": False, "message": "Missing token or chat_id", "simulated": True}
+def _format_metric(value, digits: int = 4) -> str:
+    """Format numeric metrics consistently for the report-ready dashboard."""
     try:
-        import requests
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
-        payload = {
-            "chat_id": chat_id,
-            "text": message,
-            "parse_mode": parse_mode,
-            "disable_notification": disable_notification,
-        }
-        resp = requests.post(url, json=payload, timeout=timeout)
-        try:
-            body = resp.json()
-        except Exception:
-            body = resp.text
-        return {"success": resp.ok, "status_code": resp.status_code, "response": body}
-    except Exception as e:
-        try:
-            st.error(f"Telegram error: {e}")
-        except Exception:
-            pass
-        return {"success": False, "error": str(e)}
+        if pd.isna(value):
+            return "N/A"
+        return f"{float(value):.{digits}f}"
+    except Exception:
+        return str(value)
+
+
+def _load_report_ready_outputs() -> dict:
+    """Load the current report-ready training outputs."""
+    report_dir = Path(RESULTS_DIR)
+    figures_dir = report_dir / "report_figures"
+    paths = {
+        "summary": report_dir / "report_ready_final_summary.csv",
+        "comparison": report_dir / "report_ready_model_comparison.csv",
+        "classification": report_dir / "report_ready_classification_report.csv",
+        "confusion": report_dir / "report_ready_confusion_matrix.csv",
+        "figures": figures_dir / "danh_muc_hinh_sinh_tu_notebook.csv",
+    }
+    loaded = {"paths": paths, "figures_dir": figures_dir}
+    for key, path in paths.items():
+        if key == "figures":
+            continue
+        loaded[key] = pd.read_csv(path) if path.exists() else pd.DataFrame()
+    loaded["figures"] = pd.read_csv(paths["figures"]) if paths["figures"].exists() else pd.DataFrame()
+    return loaded
+
+
+def _metric_card(label: str, value: str, color: str = "#00d4ff") -> None:
+    st.markdown(
+        f"""
+        <div class="metric-card">
+            <div class="metric-label">{label}</div>
+            <div class="metric-value" style="color:{color}; font-size:1.7em">{value}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 # ─── Page Config ───────────────────────────────────────────
 st.set_page_config(
@@ -372,19 +383,6 @@ with st.sidebar:
     else:
         st.info("Backend API: Local mode")
 
-    # Telegram settings
-    st.markdown("---")
-    st.markdown("### Telegram Alerts")
-    telegram_token = st.text_input("Bot Token", type="password", key="tg_token")
-    telegram_chat_id = st.text_input("Chat ID", key="tg_chat")
-    if st.button("Test Telegram"):
-        if telegram_token and telegram_chat_id:
-            _send_telegram(telegram_token, telegram_chat_id,
-                           "DDoS IPS Dashboard: Test alert!")
-            st.success("Test message sent!")
-        else:
-            st.error("Enter both Token and Chat ID")
-
     st.markdown("---")
     st.markdown("### IPS Settings")
     sim_mode = st.toggle("Simulation Mode", value=True)
@@ -398,9 +396,6 @@ with st.sidebar:
     - Models: RF, KNN, ET, MLP, XGB
     - 7 Attack Classes
     """)
-
-
-# (moved) Telegram helper defined earlier
 
 # ─── Tabs ──────────────────────────────────────────────────
 tab1, tab2, tab_audit, tab3 = st.tabs([
@@ -417,127 +412,119 @@ tab1, tab2, tab_audit, tab3 = st.tabs([
 with tab1:
     st.markdown("## Model Performance Analytics")
 
-    # Load scores
-    val_csv = os.path.join(RESULTS_DIR, "validation_scores.csv")
-    test_csv = os.path.join(RESULTS_DIR, "test_scores.csv")
+    outputs = _load_report_ready_outputs()
+    summary_df = outputs["summary"]
+    comparison_df = outputs["comparison"]
+    classification_df = outputs["classification"]
+    confusion_df = outputs["confusion"]
+    figures_df = outputs["figures"]
 
-    if os.path.exists(val_csv) and os.path.exists(test_csv):
-        val_df = pd.read_csv(val_csv)
-        test_df = pd.read_csv(test_csv)
-
-        # Top metrics cards
-        col1, col2, col3, col4 = st.columns(4)
-        best_f1_col = _metric_column(val_df, "f1")
-        best_acc_col = _metric_column(val_df, "accuracy")
-        if best_f1_col is None:
-            st.error(
-                "Could not find an F1 metric column in validation_scores.csv. "
-                f"Available columns: {', '.join(val_df.columns)}"
-            )
-            st.stop()
-
-        best_model = val_df.loc[pd.to_numeric(val_df[best_f1_col], errors="coerce").idxmax()]
-        best_accuracy = best_model[best_acc_col] if best_acc_col else np.nan
-        best_f1 = best_model[best_f1_col]
-
-        with col1:
-            st.markdown(f"""
-            <div class="metric-card">
-                <div class="metric-label">Best Model</div>
-                <div class="metric-value" style="font-size:1.4em">{best_model['Model']}</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        with col2:
-            st.markdown(f"""
-            <div class="metric-card">
-                <div class="metric-label">Accuracy</div>
-                <div class="metric-value">{best_accuracy:.4f}</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        with col3:
-            st.markdown(f"""
-            <div class="metric-card">
-                <div class="metric-label">F1-Score</div>
-                <div class="metric-value">{best_f1:.4f}</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        with col4:
-            st.markdown("""
-            <div class="metric-card">
-                <div class="metric-label">Models Trained</div>
-                <div class="metric-value">5</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        st.markdown("---")
-
-        # Comparison tables
-        col_left, col_right = st.columns(2)
-
-        with col_left:
-            st.markdown("### Validation Results")
-            val_highlight_cols = _highlight_metric_columns(val_df)
-            st.dataframe(
-                val_df.style.highlight_max(subset=val_highlight_cols, color="#0f3460")
-                if val_highlight_cols else val_df,
-                use_container_width=True
-            )
-
-        with col_right:
-            st.markdown("### Test Results")
-            test_highlight_cols = _highlight_metric_columns(test_df)
-            st.dataframe(
-                test_df.style.highlight_max(subset=test_highlight_cols, color="#0f3460")
-                if test_highlight_cols else test_df,
-                use_container_width=True
-            )
-
-        st.markdown("---")
-
-        # Model comparison chart
-        comp_img = os.path.join(RESULTS_DIR, "model_comparison.png")
-        if os.path.exists(comp_img):
-            st.markdown("### Model Comparison")
-            st.image(comp_img, use_container_width=True)
-
-        st.markdown("---")
-
-        # Visualizations grid
-        st.markdown("### Per-Model Visualizations")
-        model_names = ["random_forest", "knn", "extra_trees", "mlp_classifier", "xgboost"]
-        display_names = ["Random Forest", "KNN", "Extra Trees", "MLP Classifier", "XGBoost"]
-
-        selected_model = st.selectbox("Select Model", display_names)
-        safe_model = selected_model.lower().replace(" ", "_")
-
-        viz_col1, viz_col2 = st.columns(2)
-
-        cm_path = os.path.join(RESULTS_DIR, f"{safe_model}_confusion_matrix.png")
-        roc_path = os.path.join(RESULTS_DIR, f"{safe_model}_roc_curve.png")
-        fi_path = os.path.join(RESULTS_DIR, f"{safe_model}_feature_importance.png")
-        shap_path = os.path.join(RESULTS_DIR, f"{safe_model}_shap_summary_bar.png")
-
-        with viz_col1:
-            if os.path.exists(cm_path):
-                st.markdown("#### Confusion Matrix")
-                st.image(cm_path, use_container_width=True)
-            if os.path.exists(fi_path):
-                st.markdown("#### Feature Importance")
-                st.image(fi_path, use_container_width=True)
-
-        with viz_col2:
-            if os.path.exists(roc_path):
-                st.markdown("#### ROC Curve")
-                st.image(roc_path, use_container_width=True)
-            if os.path.exists(shap_path):
-                st.markdown("#### SHAP Explanation")
-                st.image(shap_path, use_container_width=True)
-
+    if summary_df.empty or comparison_df.empty:
+        st.warning(
+            "Chưa có kết quả huấn luyện mới nhất. Vui lòng chạy lại notebook báo cáo trước khi mở dashboard."
+        )
     else:
-        st.warning("No results found. Run `python main.py` first to train models.")
+        summary = summary_df.iloc[0]
+        comparison_df = comparison_df.copy()
+        comparison_df["Model Display"] = (
+            comparison_df["Model"].astype(str)
+            + " | "
+            + comparison_df["Imbalance Method"].fillna("").astype(str).replace("", "baseline")
+        )
+
+        st.caption("Dashboard đang sử dụng bộ kết quả huấn luyện mới nhất của hệ thống.")
+
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            _metric_card("Best Model", str(summary.get("best_model", "N/A")), "#00d4ff")
+        with col2:
+            _metric_card("Accuracy", _format_metric(summary.get("accuracy")), "#55A868")
+        with col3:
+            _metric_card("Macro F1", _format_metric(summary.get("macro_f1")), "#C44E52")
+        with col4:
+            _metric_card("ROC-AUC macro OvR", _format_metric(summary.get("roc_auc_macro_ovr")), "#DD8452")
+
+        col5, col6, col7, col8 = st.columns(4)
+        with col5:
+            _metric_card("Weighted F1", _format_metric(summary.get("weighted_f1")), "#64B5CD")
+        with col6:
+            _metric_card("False Alarm Rate", _format_metric(summary.get("false_alarm_rate")), "#ff9800")
+        with col7:
+            _metric_card("Attack Recall", _format_metric(summary.get("attack_recall")), "#ff1744")
+        with col8:
+            _metric_card("Models Compared", str(len(comparison_df)), "#b388ff")
+
+        st.markdown("---")
+        st.markdown("### Model Comparison")
+        display_cols = [
+            "Model",
+            "Imbalance Method",
+            "Accuracy",
+            "Balanced Accuracy",
+            "Macro F1",
+            "Weighted F1",
+            "Minority Class Recall",
+            "False Alarm Rate",
+            "Attack Recall",
+            "ROC AUC Macro OvR",
+            "CV Macro F1 Mean",
+            "CV Macro F1 Std",
+            "Train/Test Gap",
+            "Notes",
+        ]
+        existing_cols = [col for col in display_cols if col in comparison_df.columns]
+        numeric_cols = comparison_df[existing_cols].select_dtypes(include=[np.number]).columns.tolist()
+        st.dataframe(
+            comparison_df[existing_cols].style.format({col: "{:.4f}" for col in numeric_cols}),
+            use_container_width=True,
+        )
+
+        st.markdown("---")
+        st.markdown("### Best Model Detailed Evaluation")
+        detail_col1, detail_col2 = st.columns(2)
+
+        with detail_col1:
+            st.markdown("#### Classification Report")
+            if not classification_df.empty:
+                st.dataframe(classification_df, use_container_width=True)
+            else:
+                st.info("Classification report CSV is not available.")
+
+        with detail_col2:
+            st.markdown("#### Confusion Matrix")
+            if not confusion_df.empty:
+                st.dataframe(confusion_df, use_container_width=True)
+            else:
+                st.info("Confusion matrix CSV is not available.")
+
+        st.markdown("---")
+        st.markdown("### Report Figures")
+        if figures_df.empty:
+            st.info("No generated report figure catalog found.")
+        else:
+            figure_options = figures_df["Tên hình"].tolist()
+            default_index = 0
+            selected_figure = st.selectbox("Select report figure", figure_options, index=default_index)
+            figure_row = figures_df.loc[figures_df["Tên hình"] == selected_figure].iloc[0]
+            figure_path = Path(figure_row["File ảnh"])
+            if figure_path.exists():
+                st.image(str(figure_path), caption=selected_figure, use_column_width=True)
+            else:
+                st.warning("Không tìm thấy hình đã chọn. Vui lòng chạy lại notebook báo cáo để sinh biểu đồ.")
+
+            with st.expander("Show all generated report figures"):
+                for _, row in figures_df.iterrows():
+                    path = Path(row["File ảnh"])
+                    if path.exists():
+                        st.image(str(path), caption=row["Tên hình"], use_column_width=True)
+
+        st.markdown("---")
+        st.markdown("### Current Selected Model")
+        selected_model_path = Path(MODELS_DIR) / "selected_model.pkl"
+        if selected_model_path.exists():
+            st.success("Mô hình triển khai hiện tại đã sẵn sàng.")
+        else:
+            st.warning("Chưa tìm thấy mô hình triển khai hiện tại. Vui lòng huấn luyện lại mô hình.")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -560,7 +547,7 @@ with tab2:
     display_events = real_events if real_events else st.session_state.ips_events
     using_real_events = bool(real_events)
     if using_real_events:
-        st.success(f"Reading real IPS events from `{LIVE_EVENTS_CSV}`")
+        st.success("Đang đọc sự kiện IDS/IPS thực tế từ nhật ký giám sát.")
     else:
         st.info("No real IPS CSV events yet. The demo controls below generate sample events.")
 
@@ -632,9 +619,10 @@ with tab2:
     with ctrl_col1:
         if st.button("▶ Start IPS (Demo)", type="primary", use_container_width=True):
             st.session_state.ips_running = True
-            # Generate demo events
-            demo_events = _generate_demo_events(threshold)
-            st.session_state.ips_events.extend(demo_events)
+            if not using_real_events:
+                # Only generate in-memory sample events when no replay/live log is available.
+                demo_events = _generate_demo_events(threshold)
+                st.session_state.ips_events.extend(demo_events)
             st.rerun()
 
     with ctrl_col2:
@@ -644,8 +632,11 @@ with tab2:
 
     with ctrl_col3:
         if st.button("🗑 Clear Log", use_container_width=True):
-            st.session_state.ips_events = []
-            st.rerun()
+            if using_real_events:
+                st.warning("Nhật ký thực tế không được xóa trên dashboard. Dừng replay và chạy lại với tùy chọn reset nếu cần làm mới dữ liệu.")
+            else:
+                st.session_state.ips_events = []
+                st.rerun()
 
     # Event log
     st.markdown("### Event Log")
@@ -676,18 +667,6 @@ with tab2:
     else:
         st.info("No events yet. Run `python live_ips.py --list-interfaces`, then start live capture on a Windows/Npcap interface.")
 
-    # Telegram alert for attacks
-    if recent_attacks and telegram_token and telegram_chat_id:
-        for atk in recent_attacks:
-            msg = (
-                f"🚨 DDoS ALERT!\n"
-                f"Type: {atk['prediction']}\n"
-                f"Source: {atk['src_ip']}\n"
-                f"Confidence: {atk['confidence']:.1%}\n"
-                f"Blocked: {'Yes' if atk['blocked'] else 'No'}"
-            )
-            _send_telegram(telegram_token, telegram_chat_id, msg)
-
 
 # ═══════════════════════════════════════════════════════════
 #  TAB 3: AUDIT
@@ -704,9 +683,9 @@ with tab_audit:
     cv_path = os.path.join(AUDIT_DIR, "cross_validation.csv")
 
     if not os.path.exists(metrics_path):
-        st.warning("No audit results found. Run `python model_audit.py --models random_forest --cv-folds 3` first.")
+        st.warning("Chưa có kết quả audit mô hình. Có thể bỏ qua tab này nếu demo tập trung vào notebook báo cáo và Live Monitor.")
     else:
-        st.caption(f"Data source: `{AUDIT_DIR}`")
+        st.caption("Nguồn dữ liệu: kết quả audit mô hình đã sinh trong quá trình đánh giá.")
 
         if os.path.exists(summary_path):
             with open(summary_path, "r", encoding="utf-8") as f:
@@ -751,7 +730,7 @@ with tab_audit:
             )
             if os.path.exists(cm_path):
                 st.markdown("### Confusion Matrix")
-                st.image(cm_path, use_container_width=True)
+                st.image(cm_path, use_column_width=True)
 
         if os.path.exists(dist_path):
             st.markdown("### Class Distribution")
@@ -781,10 +760,12 @@ with tab3:
         model_files = [f.replace(".pkl", "") for f in os.listdir(MODELS_DIR) if f.endswith(".pkl")]
 
     if model_files:
-        selected = st.selectbox("Active Model for IPS", model_files, index=0)
-        st.info(f"Selected model: **{selected}** — used for live traffic classification")
+        preferred = "selected_model"
+        default_index = model_files.index(preferred) if preferred in model_files else 0
+        selected = st.selectbox("Active Model for IPS", model_files, index=default_index)
+        st.info(f"Selected model: **{selected}** - used for live traffic classification")
     else:
-        st.warning("No trained models found. Run `python main.py` first.")
+        st.warning("Chưa có mô hình đã huấn luyện. Vui lòng chạy notebook báo cáo trước.")
 
     st.markdown("---")
 
@@ -799,7 +780,6 @@ FLOW_CHECK_INTERVAL = 5.0 seconds
     st.markdown("---")
     st.markdown("### Backend API")
     if BACKEND_API_URL:
-        st.code(BACKEND_API_URL)
         if st.button("Test Backend API", use_container_width=True):
             health = _get_backend_health()
             if health["healthy"]:
@@ -808,42 +788,20 @@ FLOW_CHECK_INTERVAL = 5.0 seconds
                 st.error("Backend API is not reachable.")
             st.json(health)
     else:
-        st.info("Set `BACKEND_API_URL` on Render after deploying the Vercel backend.")
-
-    st.markdown("---")
-
-    st.markdown("### Telegram Alert Setup")
-    st.markdown("""
-    **How to set up Telegram alerts:**
-    1. Create a bot via [@BotFather](https://t.me/BotFather)
-    2. Copy the **Bot Token** to the sidebar
-    3. Send a message to your bot, then get your **Chat ID** from
-       `https://api.telegram.org/bot<TOKEN>/getUpdates`
-    4. Enter the Chat ID in the sidebar
-    5. Click **Test Telegram** to verify
-    """)
+        st.info("Dashboard đang chạy ở chế độ cục bộ, không sử dụng Backend API bên ngoài.")
 
     st.markdown("---")
 
     st.markdown("### Quick Start Commands")
     st.code("""
-# Train models and generate reports
-python main.py
-
 # Replay IDS/IPS demo without a network card
-python replay_ips.py --speed 0.2 --limit 500
+python replay_ips.py --speed 0.2 --limit 500 --reset
 
 # Launch Dashboard
-streamlit run app.py
+streamlit run frontend/app.py
 
-# List Windows/Npcap capture interfaces
-python live_ips.py --list-interfaces
-
-# Start IPS in safe simulation mode
-python live_ips.py --interface "Npcap Loopback Adapter" --threshold 0.95
-
-# Start IPS in LIVE mode from Administrator PowerShell only
-python live_ips.py --interface "<interface-name>" --threshold 0.99 --live
+# Start SDN/Ryu controller on Ubuntu demo environment
+./tools/run_sdn_controller.sh
     """, language="powershell")
 
     st.markdown("---")
@@ -851,9 +809,9 @@ python live_ips.py --interface "<interface-name>" --threshold 0.99 --live
     st.markdown("### System Info")
     st.json({
         "Dataset": "CICDDoS2019",
-        "Features (raw)": 78,
-        "Features (processed)": 32,
+        "Task": "Multiclass DDoS detection",
         "Classes": 7,
         "Models": 5,
-        "OS": os.name,
+        "Deployment mode": "Local IDS/IPS simulation",
     })
+

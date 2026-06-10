@@ -1,8 +1,0 @@
-class,count,train_plus_test,matches_original
-Benign,51534,51534,True
-TCP SYN Flood,47779,47779,True
-UDP Flood,27525,27525,True
-MSSQL Flood,12228,12228,True
-UDP-Lag Flood,8915,8915,True
-LDAP Flood,2722,2722,True
-NetBIOS Flood,833,833,True

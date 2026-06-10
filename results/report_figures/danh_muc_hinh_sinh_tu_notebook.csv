@@ -15,3 +15,4 @@ Hình 4.13. So sánh tỉ lệ báo động giả giữa các mô hình,D:\sourc
 Hình 4.14. Đường cong ROC nhị phân Benign/Attack,D:\source\CyRadar\VBoxShare\mlddos\results\report_figures\hinh_4_14_roc_binary_benign_attack.png
 Hình 4.15. Đường cong ROC đa lớp của mô hình tốt nhất,D:\source\CyRadar\VBoxShare\mlddos\results\report_figures\hinh_4_15_roc_multiclass_best_model.png
 Hình 4.16. Đường cong ROC đa lớp cho tất cả mô hình,D:\source\CyRadar\VBoxShare\mlddos\results\report_figures\hinh_4_16_roc_all_models_multiclass.png
+Hình 4.17. So sánh phân phối nhãn thực tế và nhãn dự đoán,D:\source\CyRadar\VBoxShare\mlddos\results\report_figures\hinh_4_17_phan_phoi_thuc_te_du_doan.png

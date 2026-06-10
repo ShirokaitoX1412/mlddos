@@ -1,9 +1,0 @@
-metric,value
-rows_before,120377.0
-rows_after,80000.0
-benign_before,41225.0
-attack_before,79152.0
-benign_after,40000.0
-attack_after,40000.0
-attack_to_benign_ratio_after,1.0
-rare_classes_oversampled,0.0

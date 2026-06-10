@@ -1,8 +1,8 @@
-2026-06-08 12:01:38.717 - INFO - Độ chính xác (Accuracy) trên tập test: 0.9716
-2026-06-08 12:01:38.717 - INFO - Tỉ lệ báo động giả (False Alarm Rate): 0.0012
-2026-06-08 12:01:38.717 - INFO - Recall phát hiện tấn công tổng quát: 0.9962
-2026-06-08 12:01:38.717 - INFO - ROC-AUC đa lớp macro OvR: 0.9943
-2026-06-08 12:01:38.717 - INFO - Báo cáo phân loại cho XGBoost | baseline:
+2026-06-08 12:28:05.649 - INFO - Độ chính xác (Accuracy) trên tập test: 0.9716
+2026-06-08 12:28:05.649 - INFO - Tỉ lệ báo động giả (False Alarm Rate): 0.0012
+2026-06-08 12:28:05.649 - INFO - Recall phát hiện tấn công tổng quát: 0.9962
+2026-06-08 12:28:05.649 - INFO - ROC-AUC đa lớp macro OvR: 0.9943
+2026-06-08 12:28:05.649 - INFO - Báo cáo phân loại cho XGBoost | baseline:
                precision    recall  f1-score   support
 
        Benign     0.9927    0.9988    0.9957     10307
@@ -19,11 +19,11 @@ UDP-Lag Flood     0.9579    0.7521    0.8426      1783
 
 ==========================================================================================
 
-2026-06-08 12:01:38.736 - INFO - Độ chính xác (Accuracy) trên tập test: 0.9680
-2026-06-08 12:01:38.736 - INFO - Tỉ lệ báo động giả (False Alarm Rate): 0.0034
-2026-06-08 12:01:38.736 - INFO - Recall phát hiện tấn công tổng quát: 0.9965
-2026-06-08 12:01:38.736 - INFO - ROC-AUC đa lớp macro OvR: 0.9939
-2026-06-08 12:01:38.736 - INFO - Báo cáo phân loại cho XGBoost | RandomUnderSampler:
+2026-06-08 12:28:05.674 - INFO - Độ chính xác (Accuracy) trên tập test: 0.9680
+2026-06-08 12:28:05.674 - INFO - Tỉ lệ báo động giả (False Alarm Rate): 0.0034
+2026-06-08 12:28:05.674 - INFO - Recall phát hiện tấn công tổng quát: 0.9965
+2026-06-08 12:28:05.674 - INFO - ROC-AUC đa lớp macro OvR: 0.9939
+2026-06-08 12:28:05.674 - INFO - Báo cáo phân loại cho XGBoost | RandomUnderSampler:
                precision    recall  f1-score   support
 
        Benign     0.9931    0.9966    0.9949     10307
@@ -40,11 +40,11 @@ UDP-Lag Flood     0.9018    0.7521    0.8202      1783
 
 ==========================================================================================
 
-2026-06-08 12:01:38.755 - INFO - Độ chính xác (Accuracy) trên tập test: 0.9633
-2026-06-08 12:01:38.755 - INFO - Tỉ lệ báo động giả (False Alarm Rate): 0.0022
-2026-06-08 12:01:38.755 - INFO - Recall phát hiện tấn công tổng quát: 0.9966
-2026-06-08 12:01:38.755 - INFO - ROC-AUC đa lớp macro OvR: 0.9888
-2026-06-08 12:01:38.755 - INFO - Báo cáo phân loại cho MLP Classifier | RandomOverSampler:
+2026-06-08 12:28:05.702 - INFO - Độ chính xác (Accuracy) trên tập test: 0.9633
+2026-06-08 12:28:05.702 - INFO - Tỉ lệ báo động giả (False Alarm Rate): 0.0022
+2026-06-08 12:28:05.702 - INFO - Recall phát hiện tấn công tổng quát: 0.9966
+2026-06-08 12:28:05.702 - INFO - ROC-AUC đa lớp macro OvR: 0.9888
+2026-06-08 12:28:05.702 - INFO - Báo cáo phân loại cho MLP Classifier | RandomOverSampler:
                precision    recall  f1-score   support
 
        Benign     0.9934    0.9978    0.9956     10307
@@ -61,11 +61,11 @@ UDP-Lag Flood     0.9128    0.6809    0.7800      1783
 
 ==========================================================================================
 
-2026-06-08 12:01:38.779 - INFO - Độ chính xác (Accuracy) trên tập test: 0.9569
-2026-06-08 12:01:38.779 - INFO - Tỉ lệ báo động giả (False Alarm Rate): 0.0139
-2026-06-08 12:01:38.779 - INFO - Recall phát hiện tấn công tổng quát: 0.9966
-2026-06-08 12:01:38.779 - INFO - ROC-AUC đa lớp macro OvR: 0.9915
-2026-06-08 12:01:38.779 - INFO - Báo cáo phân loại cho Random Forest | class_weight:
+2026-06-08 12:28:05.726 - INFO - Độ chính xác (Accuracy) trên tập test: 0.9569
+2026-06-08 12:28:05.726 - INFO - Tỉ lệ báo động giả (False Alarm Rate): 0.0139
+2026-06-08 12:28:05.726 - INFO - Recall phát hiện tấn công tổng quát: 0.9966
+2026-06-08 12:28:05.726 - INFO - ROC-AUC đa lớp macro OvR: 0.9915
+2026-06-08 12:28:05.726 - INFO - Báo cáo phân loại cho Random Forest | class_weight:
                precision    recall  f1-score   support
 
        Benign     0.9934    0.9861    0.9897     10307
@@ -82,11 +82,11 @@ UDP-Lag Flood     0.8635    0.7521    0.8040      1783
 
 ==========================================================================================
 
-2026-06-08 12:01:38.799 - INFO - Độ chính xác (Accuracy) trên tập test: 0.9587
-2026-06-08 12:01:38.799 - INFO - Tỉ lệ báo động giả (False Alarm Rate): 0.0138
-2026-06-08 12:01:38.799 - INFO - Recall phát hiện tấn công tổng quát: 0.9967
-2026-06-08 12:01:38.799 - INFO - ROC-AUC đa lớp macro OvR: 0.9889
-2026-06-08 12:01:38.799 - INFO - Báo cáo phân loại cho Extra Trees | class_weight:
+2026-06-08 12:28:05.749 - INFO - Độ chính xác (Accuracy) trên tập test: 0.9587
+2026-06-08 12:28:05.749 - INFO - Tỉ lệ báo động giả (False Alarm Rate): 0.0138
+2026-06-08 12:28:05.749 - INFO - Recall phát hiện tấn công tổng quát: 0.9967
+2026-06-08 12:28:05.749 - INFO - ROC-AUC đa lớp macro OvR: 0.9889
+2026-06-08 12:28:05.749 - INFO - Báo cáo phân loại cho Extra Trees | class_weight:
                precision    recall  f1-score   support
 
        Benign     0.9935    0.9862    0.9898     10307
@@ -103,11 +103,11 @@ UDP-Lag Flood     0.8640    0.7521    0.8042      1783
 
 ==========================================================================================
 
-2026-06-08 12:01:38.823 - INFO - Độ chính xác (Accuracy) trên tập test: 0.9291
-2026-06-08 12:01:38.823 - INFO - Tỉ lệ báo động giả (False Alarm Rate): 0.0026
-2026-06-08 12:01:38.823 - INFO - Recall phát hiện tấn công tổng quát: 0.9981
-2026-06-08 12:01:38.823 - INFO - ROC-AUC đa lớp macro OvR: 0.9699
-2026-06-08 12:01:38.823 - INFO - Báo cáo phân loại cho KNN | RandomUnderSampler:
+2026-06-08 12:28:05.784 - INFO - Độ chính xác (Accuracy) trên tập test: 0.9291
+2026-06-08 12:28:05.784 - INFO - Tỉ lệ báo động giả (False Alarm Rate): 0.0026
+2026-06-08 12:28:05.784 - INFO - Recall phát hiện tấn công tổng quát: 0.9981
+2026-06-08 12:28:05.784 - INFO - ROC-AUC đa lớp macro OvR: 0.9699
+2026-06-08 12:28:05.784 - INFO - Báo cáo phân loại cho KNN | RandomUnderSampler:
                precision    recall  f1-score   support
 
        Benign     0.9963    0.9974    0.9968     10307
@@ -124,11 +124,11 @@ UDP-Lag Flood     0.4871    0.7207    0.5813      1783
 
 ==========================================================================================
 
-2026-06-08 12:01:38.847 - INFO - Độ chính xác (Accuracy) trên tập test: 0.9683
-2026-06-08 12:01:38.847 - INFO - Tỉ lệ báo động giả (False Alarm Rate): 0.0016
-2026-06-08 12:01:38.847 - INFO - Recall phát hiện tấn công tổng quát: 0.9954
-2026-06-08 12:01:38.847 - INFO - ROC-AUC đa lớp macro OvR: 0.9917
-2026-06-08 12:01:38.847 - INFO - Báo cáo phân loại cho Random Forest | baseline:
+2026-06-08 12:28:05.812 - INFO - Độ chính xác (Accuracy) trên tập test: 0.9683
+2026-06-08 12:28:05.812 - INFO - Tỉ lệ báo động giả (False Alarm Rate): 0.0016
+2026-06-08 12:28:05.812 - INFO - Recall phát hiện tấn công tổng quát: 0.9954
+2026-06-08 12:28:05.812 - INFO - ROC-AUC đa lớp macro OvR: 0.9917
+2026-06-08 12:28:05.812 - INFO - Báo cáo phân loại cho Random Forest | baseline:
                precision    recall  f1-score   support
 
        Benign     0.9910    0.9984    0.9947     10307
