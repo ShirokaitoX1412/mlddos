@@ -18,14 +18,14 @@ Bài toán đặt ra: **phân loại lưu lượng mạng thành 7 lớp** (1 l�
 
 1. Xây dựng pipeline học máy hoàn chỉnh: từ nạp dữ liệu, tiền xử lý, huấn luyện, đánh giá đến lưu mô hình.
 2. Đảm bảo tính khoa học: kiểm soát data leakage, overfitting, đánh giá bằng cross-validation và nhiều thước đo.
-3. Xuất mô hình tương thích với SDN/Ryu controller để demo phát hiện DDoS trên mạng ảo (Mininet/Open vSwitch).
+3. Demo phát hiện DDoS thời gian thực trên 2 máy ảo: VM tấn công sinh traffic, VM nạn nhân chạy IDS/IPS phân loại và chặn.
 4. Cung cấp giao diện giám sát trực quan bằng Streamlit.
 
 ### 1.4. Phạm vi
 
 - Dữ liệu: bộ CICDDoS2019 ở dạng flow features (đã trích xuất sẵn bằng CICFlowMeter), không phải raw packet.
 - Thuật toán: Random Forest, Extra Trees, XGBoost, MLP Classifier.
-- Triển khai demo: Ryu SDN controller + Mininet, Streamlit dashboard, replay IDS offline.
+- Triển khai demo: 2 máy ảo (Attacker + Victim) với Scapy, Streamlit dashboard, replay IDS offline.
 
 ---
 
@@ -79,8 +79,8 @@ Dữ liệu ở dạng **flow-level features** — mỗi bản ghi đại diện
             ┌──────────────┼──────────────────┐
             ▼              ▼                  ▼
     ┌──────────────┐ ┌──────────┐    ┌───────────────┐
-    │ SDN/Ryu      │ │ Replay   │    │  Streamlit    │
-    │ Controller   │ │ IDS Demo │    │  Dashboard    │
+    │ Live IPS     │ │ Replay   │    │  Streamlit    │
+    │ (2 VM Demo) │ │ IDS Demo │    │  Dashboard    │
     └──────────────┘ └──────────┘    └───────────────┘
 ```
 
@@ -95,7 +95,7 @@ Dữ liệu ở dạng **flow-level features** — mỗi bản ghi đại diện
 | Saved Models | `saved_models/` | Lưu trữ model đã train dạng pickle |
 | Replay IDS | `replay_ips.py` | Demo offline — phát lại flow từ dataset, phân loại và ghi log |
 | Live IPS | `live_ips.py` | Bắt gói tin thời gian thực bằng Scapy, phân loại và chặn IP |
-| SDN Controller | `sdn_ryu_detector.py` | Ryu OpenFlow controller, giám sát flow stats và phát hiện DDoS |
+| Traffic Generator | `tools/ddos_traffic_generator.py` | Sinh traffic tấn công trên VM attacker cho demo |
 | Dashboard | `frontend/app.py` | Giao diện Streamlit hiển thị kết quả và giám sát |
 | SHAP Explainer | `shap_explainer.py` | Giải thích mô hình bằng SHAP values |
 
@@ -109,10 +109,10 @@ mlddos/
 │   │   ├── preprocessor.py       # Tiền xử lý leakage-safe
 │   │   ├── models.py             # Định nghĩa và huấn luyện mô hình
 │   │   ├── main.py               # Pipeline chính (CLI)
-│   │   ├── sdn_ryu_detector.py   # Ryu/SDN controller
 │   │   ├── live_ips.py           # IPS thời gian thực (Scapy)
 │   │   ├── replay_ips.py         # Demo phát lại flow offline
 │   │   ├── mitigation.py         # Chặn/bỏ chặn IP (iptables/netsh)
+│   │   ├── sdn_ryu_detector.py   # Ryu/SDN controller (prototype)
 │   │   ├── shap_explainer.py     # Giải thích SHAP
 │   │   └── paths.py              # Quản lý đường dẫn
 │   └── requirements.txt
@@ -120,6 +120,9 @@ mlddos/
 │   └── app.py                    # Dashboard Streamlit
 ├── notebooks/
 │   └── ddos_detection_report_ready.ipynb   # Notebook báo cáo
+├── tools/
+│   ├── ddos_traffic_generator.py  # Traffic generator cho VM attacker
+│   └── mininet_sdn_topology.py    # Topology Mininet (prototype)
 ├── tests/
 │   └── test_smoke_predict.py     # Kiểm thử predict_proba
 ├── data/                          # Dữ liệu CICDDoS2019
@@ -313,7 +316,135 @@ Hậu quả: mô hình học phân phối train nhưng test có phân phối kh�
 
 ## 8. Triển khai demo hệ thống
 
-### 8.1. Replay IDS (Demo offline — không cần card mạng)
+### 8.1. Demo 2 máy ảo — Phát hiện DDoS thời gian thực
+
+Đây là phương pháp demo chính của hệ thống, sử dụng 2 máy ảo (VM) trên cùng mạng nội bộ ảo (host-only hoặc internal network).
+
+#### 8.1.1. Mô hình triển khai
+
+```text
+┌────────────────────────┐          ┌────────────────────────┐
+│    VM 1 — ATTACKER     │          │    VM 2 — VICTIM       │
+│    (Kali / Ubuntu)     │          │    (Ubuntu)            │
+│                        │          │                        │
+│  ddos_traffic_         │  ─────▶  │  live_ips.py (Scapy)   │
+│  generator.py          │ Network  │    ↓                   │
+│                        │          │  ML Model predict      │
+│  hping3 / Scapy        │          │    ↓                   │
+│                        │          │  iptables block IP     │
+│                        │          │    ↓                   │
+│                        │          │  Dashboard (Streamlit) │
+└────────────────────────┘          └────────────────────────┘
+     192.168.56.101                      192.168.56.102
+         (ví dụ)                           (ví dụ)
+```
+
+**Ưu điểm so với SDN:**
+- Features được trích xuất **đầy đủ 77 features** từ Scapy (khớp 100% với training data CICFlowMeter).
+- Kịch bản tấn công rõ ràng, dễ giải thích cho hội đồng.
+- Dễ tái tạo — chỉ cần VirtualBox/VMware và 2 VM.
+
+#### 8.1.2. Chuẩn bị
+
+**VM 1 — Attacker** (Kali Linux hoặc Ubuntu):
+```bash
+pip install scapy
+# Hoặc cài hping3:
+sudo apt install hping3
+```
+
+**VM 2 — Victim** (Ubuntu):
+```bash
+# Clone project và cài đặt
+git clone https://github.com/ShirokaitoX1412/mlddos.git
+cd mlddos
+python -m venv venv && source venv/bin/activate
+pip install -r backend/requirements.txt
+
+# Train model (hoặc copy saved_models/ từ máy đã train)
+PYTHONPATH=backend/src python -m ml_ddos.main --combine-resplit --cv-folds 3 --search-iter 10
+```
+
+**Cấu hình mạng:**
+- VirtualBox: Host-Only Adapter (`vboxnet0`, subnet 192.168.56.0/24)
+- VMware: Custom VMnet (host-only)
+- Cả 2 VM cùng subnet, ping được lẫn nhau
+
+#### 8.1.3. Các kịch bản tấn công DDoS
+
+| # | Kịch bản | Loại tấn công | Mô tả |
+|---|----------|---------------|-------|
+| 1 | Baseline | Benign | Lưu lượng bình thường (HTTP, ICMP, DNS) |
+| 2 | TCP SYN Flood | Volumetric | Gửi hàng loạt gói SYN làm cạn bảng kết nối |
+| 3 | UDP Flood | Volumetric | Gửi lượng lớn gói UDP nhỏ gây quá tải |
+| 4 | UDP-Lag Flood | Volumetric | Gửi gói UDP lớn (1400 bytes) gây trễ xử lý |
+| 5 | LDAP Flood | Amplification | Traffic giả lập phản hồi LDAP (port 389) |
+| 6 | MSSQL Flood | Amplification | Traffic giả lập phản hồi MSSQL (port 1434) |
+| 7 | NetBIOS Flood | Amplification | Traffic giả lập NetBIOS query (port 137) |
+
+#### 8.1.4. Thực hiện demo
+
+**Bước 1 — Khởi chạy IDS/IPS trên VM Victim (Terminal 1):**
+```bash
+cd mlddos
+source venv/bin/activate
+
+# Chế độ mô phỏng (an toàn — chỉ ghi log, không chặn IP thật)
+sudo PYTHONPATH=backend/src python -m ml_ddos.live_ips -i eth0
+
+# Chế độ IPS thật (CÓ chặn IP bằng iptables)
+sudo PYTHONPATH=backend/src python -m ml_ddos.live_ips -i eth0 --live
+```
+
+**Bước 2 — (Tùy chọn) Khởi chạy Dashboard trên VM Victim (Terminal 2):**
+```bash
+cd mlddos && source venv/bin/activate
+streamlit run frontend/app.py
+# Mở: http://192.168.56.102:8501
+```
+
+**Bước 3 — Sinh traffic tấn công từ VM Attacker:**
+
+Cách 1 — Dùng script tự động (Scapy):
+```bash
+# Chạy từng kịch bản riêng lẻ:
+sudo python3 tools/ddos_traffic_generator.py --target 192.168.56.102 --attack syn_flood -d 30
+sudo python3 tools/ddos_traffic_generator.py --target 192.168.56.102 --attack udp_flood -d 30
+sudo python3 tools/ddos_traffic_generator.py --target 192.168.56.102 --attack udp_lag -d 30
+sudo python3 tools/ddos_traffic_generator.py --target 192.168.56.102 --attack ldap_flood -d 30
+sudo python3 tools/ddos_traffic_generator.py --target 192.168.56.102 --attack mssql_flood -d 30
+sudo python3 tools/ddos_traffic_generator.py --target 192.168.56.102 --attack netbios_flood -d 30
+
+# Chạy TẤT CẢ kịch bản liên tiếp (30s mỗi loại):
+sudo python3 tools/ddos_traffic_generator.py --target 192.168.56.102 --attack all -d 210
+```
+
+Cách 2 — Dùng hping3 (thủ công):
+```bash
+# TCP SYN Flood
+sudo hping3 -S --flood -p 80 192.168.56.102
+
+# UDP Flood
+sudo hping3 --udp --flood -p 53 192.168.56.102
+
+# UDP-Lag (payload lớn)
+sudo hping3 --udp --flood -d 1400 -p 80 192.168.56.102
+```
+
+#### 8.1.5. Kết quả
+
+- **Console VM Victim**: Hiển thị log real-time — mỗi flow được phân loại (Benign / loại tấn công) kèm confidence.
+- **File log**: `results/live_events.csv` — ghi lại toàn bộ events.
+- **Dashboard**: Biểu đồ cập nhật trực tiếp (nếu đã chạy Streamlit).
+- **Chặn IP** (chế độ `--live`): Tự động thêm rule `iptables -A INPUT -s <IP> -j DROP`.
+
+#### 8.1.6. Lưu ý an toàn
+
+- **Chỉ chạy trên mạng lab cô lập** (host-only / internal network).
+- Chế độ mặc định là **SIMULATION** — chỉ ghi log, không thực thi iptables.
+- Flag `--live` sẽ chặn IP thật — chỉ dùng trên VM lab.
+
+### 8.2. Replay IDS (Demo offline — không cần card mạng)
 
 **Mục đích**: Demo phát hiện DDoS bằng cách phát lại flow từ dataset, không cần capture packet thật. Phù hợp cho trình bày báo cáo.
 
@@ -330,23 +461,6 @@ $env:PYTHONPATH="backend\src"; python -m ml_ddos.replay_ips --model selected_mod
 
 **Lưu ý**: Không thực thi lệnh chặn IP, chỉ ghi log.
 
-### 8.2. Live IPS (Giám sát thời gian thực bằng Scapy)
-
-**Mục đích**: Bắt gói tin thực tế từ card mạng, gom thành flow, phân loại và chặn IP nếu phát hiện tấn công.
-
-**Lệnh chạy:**
-```bash
-# Chế độ mô phỏng (an toàn — chỉ ghi log, không chặn IP thật)
-sudo PYTHONPATH=backend/src python -m ml_ddos.live_ips
-
-# Chế độ thật (CÓ chặn IP bằng iptables)
-sudo PYTHONPATH=backend/src python -m ml_ddos.live_ips --live
-```
-
-**Kết quả sinh ra**: Log cảnh báo real-time, `results/live_events.csv`.
-
-**Lưu ý an toàn**: Chế độ `--live` sẽ thực thi lệnh `iptables` để chặn IP. Chỉ chạy trên máy lab/VM, không chạy trên production server.
-
 ### 8.3. Dashboard Streamlit
 
 **Mục đích**: Giao diện trực quan hiển thị kết quả phân tích, biểu đồ so sánh models, confusion matrix, ROC curve, SHAP, và log giám sát.
@@ -358,29 +472,6 @@ streamlit run frontend/app.py
 
 **Kết quả**: Mở trình duyệt tại `http://localhost:8501` với các tab: Phân tích mô hình, Giám sát trực tiếp, Cảnh báo.
 
-### 8.4. SDN/Ryu Controller (Mininet + Open vSwitch)
-
-**Mục đích**: Demo phát hiện DDoS trong môi trường mạng ảo SDN. Controller giám sát flow statistics từ OpenFlow switch và gọi model để phân loại.
-
-**Yêu cầu**: Ubuntu với Mininet, Open vSwitch, Ryu framework đã cài đặt.
-
-**Lệnh chạy:**
-```bash
-# Terminal 1: Khởi chạy Ryu controller
-PYTHONPATH=backend/src ryu-manager backend/src/ml_ddos/sdn_ryu_detector.py
-
-# Terminal 2: Khởi chạy Mininet topology
-sudo mn --controller=remote --switch=ovsk --topo=tree,depth=2,fanout=3
-
-# Terminal 3 (trong Mininet): Sinh traffic test
-h1 ping h2
-h1 hping3 --flood -S -p 80 h2   # Giả lập SYN flood
-```
-
-**Kết quả**: Controller in log phân loại flow mỗi 10 giây, tự động gọi `predict_proba()` và cảnh báo nếu phát hiện DDoS.
-
-**Lưu ý**: Cần file `saved_models/selected_model.pkl` đã train trước khi chạy controller.
-
 ---
 
 ## 9. Hướng dẫn cài đặt và chạy project
@@ -389,8 +480,9 @@ h1 hping3 --flood -S -p 80 h2   # Giả lập SYN flood
 
 - Python 3.10 trở lên
 - pip hoặc virtualenv
-- (Tùy chọn) Mininet + Open vSwitch + Ryu cho demo SDN
-- (Tùy chọn) Scapy + quyền root cho Live IPS
+- Scapy + quyền root cho Live IPS (VM Victim)
+- (Tùy chọn) hping3 trên VM Attacker
+- (Tùy chọn) VirtualBox hoặc VMware cho demo 2 VM
 
 ### 9.2. Cài đặt
 
@@ -477,17 +569,16 @@ PYTHONPATH=backend/src python -m ml_ddos.replay_ips --model selected_model --row
 $env:PYTHONPATH="backend\src"; python -m ml_ddos.replay_ips --model selected_model --rows 200
 ```
 
-### 9.8. Chạy SDN/Ryu demo (Ubuntu)
+### 9.8. Chạy demo 2 VM
+
+Xem chi tiết tại [Mục 8.1](#81-demo-2-máy-ảo--phát-hiện-ddos-thời-gian-thực).
 
 ```bash
-# Cài đặt Ryu (nếu chưa có)
-pip install ryu
+# VM Victim — chạy IDS/IPS
+sudo PYTHONPATH=backend/src python -m ml_ddos.live_ips -i eth0
 
-# Chạy controller
-PYTHONPATH=backend/src ryu-manager backend/src/ml_ddos/sdn_ryu_detector.py
-
-# Chạy Mininet (terminal khác)
-sudo mn --controller=remote --switch=ovsk --topo=tree,depth=2,fanout=3
+# VM Attacker — sinh traffic tấn công
+sudo python3 tools/ddos_traffic_generator.py --target <VICTIM_IP> --attack all -d 210
 ```
 
 ---
@@ -498,15 +589,15 @@ sudo mn --controller=remote --switch=ovsk --topo=tree,depth=2,fanout=3
 
 1. **Dataset không hoàn toàn phản ánh traffic thực tế**: CICDDoS2019 được tạo trong môi trường lab, có thể khác với traffic production.
 2. **Một số lớp có ít mẫu**: NetBIOS (0,45%) và LDAP (1,81%) có số mẫu hạn chế, ảnh hưởng đến khả năng tổng quát hóa.
-3. **Feature extraction cho SDN**: OVS flow statistics không cung cấp đầy đủ 77 features như CICFlowMeter — nhiều features phải ước lượng bằng heuristic.
-4. **Chưa kiểm thử trên traffic thật**: Hệ thống chỉ được đánh giá trên CICDDoS2019, cần thêm đánh giá trên dữ liệu thực.
-5. **Thời gian phân loại**: Pipeline hiện tại chưa tối ưu cho real-time với lượng flow lớn (> 10.000 flow/s).
+3. **Chưa kiểm thử trên traffic thật**: Hệ thống chỉ được đánh giá trên CICDDoS2019, cần thêm đánh giá trên dữ liệu thực tế từ mạng campus/enterprise.
+4. **Thời gian phân loại**: Pipeline hiện tại chưa tối ưu cho real-time với lượng flow lớn (> 10.000 flow/s).
+5. **Traffic generator đơn giản**: Script sinh traffic dùng Scapy/hping3 chỉ mô phỏng pattern cơ bản, chưa tái tạo đúng đặc điểm phức tạp của các cuộc tấn công thực tế.
 
 ### 10.2. Hướng phát triển
 
 1. **Kiểm thử trên traffic thật**: Thu thập dữ liệu từ mạng campus/enterprise để đánh giá generalization.
 2. **Tối ưu feature extraction live**: Giảm số features cần thiết, dùng feature selection để chỉ giữ top-K features quan trọng nhất.
-3. **SDN mitigation tự động**: Khi phát hiện DDoS, controller tự động cài flow rule chặn trên switch (đã có skeleton trong `sdn_ryu_detector.py`).
+3. **Triển khai SDN**: Mở rộng sang SDN/Ryu controller với Mininet/Open vSwitch để demo mitigation tự động bằng flow rules (đã có prototype trong `sdn_ryu_detector.py`). Cần cải thiện feature extraction từ OVS flow stats — hiện tại OVS chỉ cung cấp được ~20/77 features.
 4. **Alerting**: Tích hợp cảnh báo Telegram/Email khi phát hiện tấn công.
 5. **Mở rộng dataset**: Kết hợp thêm CIC-IDS2017, UNSW-NB15 để tăng đa dạng attack patterns.
 6. **Deep Learning**: Thử nghiệm LSTM/CNN trên time-series flow features.
@@ -520,7 +611,7 @@ sudo mn --controller=remote --switch=ovsk --topo=tree,depth=2,fanout=3
 - **Pipeline ML hoàn chỉnh**: Từ nạp dữ liệu, tiền xử lý (leakage-safe), huấn luyện với cross-validation, đến đánh giá và lưu mô hình.
 - **Xử lý vấn đề distribution shift**: Phương pháp Combine & Re-split đã loại bỏ hoàn toàn hiện tượng overfitting do source-based split của CICDDoS2019, nâng Test Macro F1 từ 0,677 lên 0,939.
 - **Mô hình đạt hiệu suất cao**: XGBoost đạt Accuracy 97,56%, Macro F1 93,86%, với Train/Test Gap chỉ 0,21%.
-- **Tương thích SDN**: Mô hình có thể được gọi bởi Ryu controller qua `predict_proba()`, hỗ trợ phát hiện DDoS trong môi trường mạng ảo.
-- **Nhiều hình thức demo**: Replay offline, Live IPS, Dashboard Streamlit, và SDN/Mininet.
+- **Demo 2 máy ảo**: VM Attacker sinh traffic DDoS (7 kịch bản), VM Victim chạy IDS/IPS phân loại thời gian thực bằng Scapy, features khớp 100% với training data.
+- **Nhiều hình thức demo**: Demo 2 VM thời gian thực, Replay offline, Dashboard Streamlit.
 
-Hệ thống có ý nghĩa thực tiễn trong việc hỗ trợ quản trị viên mạng phát hiện sớm các cuộc tấn công DDoS và có thể được mở rộng cho ứng dụng giám sát mạng trong môi trường SDN thực tế.
+Hệ thống có ý nghĩa thực tiễn trong việc hỗ trợ quản trị viên mạng phát hiện sớm các cuộc tấn công DDoS. Hướng phát triển tiếp theo bao gồm triển khai trên SDN controller để tự động chặn tấn công bằng flow rules và kiểm thử trên traffic mạng thực tế.
