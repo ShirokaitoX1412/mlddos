@@ -382,19 +382,15 @@ PYTHONPATH=backend/src python -m ml_ddos.main --combine-resplit --cv-folds 3 --s
 
 #### 8.1.3. Các kịch bản tấn công DDoS
 
+Demo sử dụng 2 kịch bản tấn công chính, kèm baseline lưu lượng bình thường:
+
 | # | Kịch bản | Tầng | Loại tấn công | Mô tả |
 |---|----------|------|---------------|-------|
-| 1 | Baseline | — | Benign | Lưu lượng bình thường (HTTP, ICMP, DNS) |
-| 2 | TCP SYN Flood | Layer 4 | Volumetric | Gửi hàng loạt gói SYN từ IP thật |
-| **3** | **SYN Flood + IP Spoofing** | **Layer 4** | **Volumetric** | **Gói SYN với IP nguồn giả mạo (như hping3 --rand-source) — làm tràn state table** |
-| 4 | UDP Flood | Layer 4 | Volumetric | Gửi lượng lớn gói UDP nhỏ gây quá tải |
-| 5 | UDP-Lag Flood | Layer 4 | Volumetric | Gửi gói UDP lớn (1400 bytes) gây trễ xử lý |
-| 6 | LDAP Flood | Layer 4 | Amplification | Traffic giả lập phản hồi LDAP (port 389) |
-| 7 | MSSQL Flood | Layer 4 | Amplification | Traffic giả lập phản hồi MSSQL (port 1434) |
-| 8 | NetBIOS Flood | Layer 4 | Amplification | Traffic giả lập NetBIOS query (port 137) |
-| **9** | **Slowloris** | **Layer 7** | **Application** | **Giữ kết nối HTTP mở lâu, vắt kiệt connection pool của web server** |
+| 0 | Baseline | — | Benign | Lưu lượng bình thường (HTTP, ICMP, DNS) để so sánh |
+| **A** | **SYN Flood + IP Spoofing** | **Layer 4** | **Volumetric** | Gửi gói SYN với **IP nguồn giả mạo** liên tục (như `hping3 --rand-source`) — làm tràn bảng trạng thái (state table) của máy mục tiêu |
+| **B** | **Slowloris** | **Layer 7** | **Application** | Giữ nhiều kết nối HTTP mở lâu bằng cách gửi partial headers — vắt kiệt connection pool của web server mà không cần băng thông lớn |
 
-> **Lưu ý về Slowloris**: Model được train trên CICDDoS2019 **không có class Slowloris**. Model có thể phân loại traffic này thành TCP SYN Flood hoặc Benign — đây là hạn chế đáng ghi nhận trong báo cáo.
+> **Lưu ý về Slowloris**: Model được train trên CICDDoS2019 **không có class Slowloris**. Model có thể phân loại traffic này thành TCP SYN Flood hoặc Benign — đây là hạn chế đáng ghi nhận và thảo luận trong báo cáo.
 
 #### 8.1.4. Thực hiện demo
 
@@ -441,11 +437,11 @@ streamlit run frontend/app.py
 
 **Kịch bản A — SYN Flood với IP Spoofing (Layer 4):**
 ```bash
-# Cách 1: Dùng hping3 (khuyến nghị)
+# Cách 1: Dùng hping3 (khuyến nghị — tốc độ cao)
 sudo hping3 -S --flood -V -p 80 --rand-source 192.168.56.102
-# -S: Cờ SYN | --flood: Tốc độ tối đa | --rand-source: IP giả mạo
+# -S: Cờ SYN | --flood: Tốc độ tối đa | --rand-source: IP giả mạo mỗi gói
 
-# Cách 2: Dùng script (tùy chỉnh được PPS)
+# Cách 2: Dùng script (tùy chỉnh được PPS và thời gian)
 sudo python3 tools/ddos_traffic_generator.py --target 192.168.56.102 --attack syn_spoof -d 60 --pps 200
 ```
 
@@ -459,33 +455,10 @@ sudo python3 tools/ddos_traffic_generator.py --target 192.168.56.102 --attack sl
 slowloris 192.168.56.102 -s 500
 ```
 
-**Các kịch bản khác (CICDDoS2019 attack types):**
+**Chạy tất cả kịch bản liên tiếp (benign → SYN Spoof → Slowloris):**
 ```bash
-# Chạy từng kịch bản riêng lẻ:
-sudo python3 tools/ddos_traffic_generator.py --target 192.168.56.102 --attack syn_flood -d 30
-sudo python3 tools/ddos_traffic_generator.py --target 192.168.56.102 --attack udp_flood -d 30
-sudo python3 tools/ddos_traffic_generator.py --target 192.168.56.102 --attack udp_lag -d 30
-sudo python3 tools/ddos_traffic_generator.py --target 192.168.56.102 --attack ldap_flood -d 30
-sudo python3 tools/ddos_traffic_generator.py --target 192.168.56.102 --attack mssql_flood -d 30
-sudo python3 tools/ddos_traffic_generator.py --target 192.168.56.102 --attack netbios_flood -d 30
-
-# Chạy TẤT CẢ kịch bản liên tiếp (9 kịch bản, ~30s mỗi loại):
-sudo python3 tools/ddos_traffic_generator.py --target 192.168.56.102 --attack all -d 270
-```
-
-**Dùng hping3 (thủ công):**
-```bash
-# TCP SYN Flood (IP thật)
-sudo hping3 -S --flood -p 80 192.168.56.102
-
-# TCP SYN Flood + IP Spoofing
-sudo hping3 -S --flood -V -p 80 --rand-source 192.168.56.102
-
-# UDP Flood
-sudo hping3 --udp --flood -p 53 192.168.56.102
-
-# UDP-Lag (payload lớn)
-sudo hping3 --udp --flood -d 1400 -p 80 192.168.56.102
+sudo python3 tools/ddos_traffic_generator.py --target 192.168.56.102 --attack all -d 90
+# 30s mỗi pha: benign (baseline) → syn_spoof → slowloris
 ```
 
 #### 8.1.5. Theo dõi và thu thập kết quả
@@ -676,8 +649,8 @@ sudo hping3 -S --flood -V -p 80 --rand-source <VICTIM_IP>
 # VM Attacker — Kịch bản B: Slowloris
 sudo python3 tools/ddos_traffic_generator.py --target <VICTIM_IP> --attack slowloris -d 120
 
-# VM Attacker — Tất cả kịch bản liên tiếp
-sudo python3 tools/ddos_traffic_generator.py --target <VICTIM_IP> --attack all -d 270
+# Chạy tuần tự: benign → SYN Spoof → Slowloris
+sudo python3 tools/ddos_traffic_generator.py --target <VICTIM_IP> --attack all -d 90
 ```
 
 ---
@@ -712,7 +685,7 @@ sudo python3 tools/ddos_traffic_generator.py --target <VICTIM_IP> --attack all -
 - **Pipeline ML hoàn chỉnh**: Từ nạp dữ liệu, tiền xử lý (leakage-safe), huấn luyện với cross-validation, đến đánh giá và lưu mô hình.
 - **Xử lý vấn đề distribution shift**: Phương pháp Combine & Re-split đã loại bỏ hoàn toàn hiện tượng overfitting do source-based split của CICDDoS2019, nâng Test Macro F1 từ 0,677 lên 0,939.
 - **Mô hình đạt hiệu suất cao**: XGBoost đạt Accuracy 97,56%, Macro F1 93,86%, với Train/Test Gap chỉ 0,21%.
-- **Demo 2 máy ảo**: VM Attacker sinh traffic DDoS (9 kịch bản bao gồm SYN Flood + IP Spoofing và Slowloris), VM Victim chạy IDS/IPS phân loại thời gian thực bằng Scapy, features khớp 100% với training data.
+- **Demo 2 máy ảo**: VM Attacker sinh traffic DDoS (2 kịch bản: SYN Flood + IP Spoofing và Slowloris), VM Victim chạy IDS/IPS phân loại thời gian thực bằng Scapy, features khớp 100% với training data.
 - **Nhiều hình thức demo**: Demo 2 VM thời gian thực (Layer 4 + Layer 7), Replay offline, Dashboard Streamlit.
 
 Hệ thống có ý nghĩa thực tiễn trong việc hỗ trợ quản trị viên mạng phát hiện sớm các cuộc tấn công DDoS. Hướng phát triển tiếp theo bao gồm triển khai trên SDN controller để tự động chặn tấn công bằng flow rules và kiểm thử trên traffic mạng thực tế.
