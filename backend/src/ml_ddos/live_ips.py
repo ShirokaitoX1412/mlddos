@@ -34,6 +34,7 @@ except ImportError:
     sys.exit(1)
 
 from .mitigation import block_ip
+from .alert_notifier import show_ddos_popup
 from .paths import MODELS_DIR as PROJECT_MODELS_DIR
 from .paths import RESULTS_DIR as PROJECT_RESULTS_DIR
 
@@ -518,6 +519,14 @@ class LiveIPS:
                                 f"[IPS] Blocking {src_ip} — {pred_name} "
                                 f"(confidence: {pred_prob:.2%})"
                             )
+                            
+                                    # Step 5.1: show popup immediately after DDoS detection
+                            show_ddos_popup(event)
+
+                            # Step 5.2: block attacker IP
+                            logger.critical(
+                                f"[IPS] Blocking attacker IP: {src_ip}"
+                          )
                             result = block_ip(
                                 src_ip,
                                 reason=f"{pred_name} (confidence: {pred_prob:.2%})",

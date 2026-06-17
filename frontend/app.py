@@ -12,11 +12,13 @@ Usage:
 
 import os
 from pathlib import Path
+import subprocess
 import sys
 import time
 from datetime import datetime
 
-BACKEND_SRC = Path(__file__).resolve().parents[1] / "backend" / "src"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+BACKEND_SRC = PROJECT_ROOT / "backend" / "src"
 if str(BACKEND_SRC) not in sys.path:
     sys.path.insert(0, str(BACKEND_SRC))
 
@@ -31,6 +33,7 @@ MODELS_DIR = str(MODELS_DIR)
 AUDIT_DIR = str(AUDIT_DIR)
 BACKEND_API_URL = os.getenv("BACKEND_API_URL", "").rstrip("/")
 LIVE_EVENTS_CSV = os.path.join(RESULTS_DIR, "live_events.csv")
+LIVE_IPS_ENTRYPOINT = PROJECT_ROOT / "live_ips.py"
 
 
 def _get_backend_health() -> dict:
@@ -50,6 +53,50 @@ def _get_backend_health() -> dict:
             "response": body,
             "url": BACKEND_API_URL,
         }
+
+
+def _is_process_running(process) -> bool:
+    """Return True when a background subprocess is still alive."""
+    return process is not None and process.poll() is None
+
+
+def _start_live_ips_process(interface: str, threshold: float, simulation: bool):
+    """Start live_ips.py from the dashboard without adding another script."""
+    command = [
+        sys.executable,
+        str(LIVE_IPS_ENTRYPOINT),
+        "--threshold",
+        str(threshold),
+        "--events-csv",
+        LIVE_EVENTS_CSV,
+    ]
+    if interface.strip():
+        command.extend(["--interface", interface.strip()])
+    if not simulation:
+        command.append("--live")
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(BACKEND_SRC)
+    return subprocess.Popen(
+        command,
+        cwd=str(PROJECT_ROOT),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+
+
+def _stop_live_ips_process():
+    """Stop the dashboard-managed live IPS process if it exists."""
+    process = st.session_state.get("live_ips_process")
+    if _is_process_running(process):
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+    st.session_state.live_ips_process = None
     except Exception as e:
         return {
             "configured": True,
@@ -387,6 +434,12 @@ with st.sidebar:
     st.markdown("### IPS Settings")
     sim_mode = st.toggle("Simulation Mode", value=True)
     threshold = st.slider("Attack Threshold", 0.5, 1.0, 0.95, 0.01)
+    capture_interface = st.text_input(
+        "Capture Interface",
+        value="",
+        placeholder="Để trống = auto, hoặc nhập enp0s3/eth0/Npcap...",
+        help="Trên Ubuntu VM thường là enp0s3 hoặc eth0. Xem bằng lệnh: ip a",
+    )
 
     st.markdown("---")
     st.markdown("### About")
@@ -536,8 +589,11 @@ with tab2:
     # Initialize session state
     if "ips_events" not in st.session_state:
         st.session_state.ips_events = []
-    if "ips_running" not in st.session_state:
-        st.session_state.ips_running = False
+    if "live_ips_process" not in st.session_state:
+        st.session_state.live_ips_process = None
+    if "live_ips_message" not in st.session_state:
+        st.session_state.live_ips_message = ""
+    st.session_state.ips_running = _is_process_running(st.session_state.live_ips_process)
     if "attack_count" not in st.session_state:
         st.session_state.attack_count = 0
     if "blocked_count" not in st.session_state:
@@ -549,7 +605,9 @@ with tab2:
     if using_real_events:
         st.success("Đang đọc sự kiện IDS/IPS thực tế từ nhật ký giám sát.")
     else:
-        st.info("No real IPS CSV events yet. The demo controls below generate sample events.")
+        st.info("Chưa có sự kiện thật. Bấm Start IPS để dashboard tự chạy bộ phát hiện trên máy Victim.")
+    if st.session_state.live_ips_message:
+        st.caption(st.session_state.live_ips_message)
 
     # Status cards
     status_col1, status_col2, status_col3, status_col4 = st.columns(4)
@@ -617,17 +675,30 @@ with tab2:
     ctrl_col1, ctrl_col2, ctrl_col3 = st.columns(3)
 
     with ctrl_col1:
-        if st.button("▶ Start IPS (Demo)", type="primary", use_container_width=True):
-            st.session_state.ips_running = True
-            if not using_real_events:
-                # Only generate in-memory sample events when no replay/live log is available.
-                demo_events = _generate_demo_events(threshold)
-                st.session_state.ips_events.extend(demo_events)
+        if st.button("▶ Start IPS", type="primary", use_container_width=True):
+            if _is_process_running(st.session_state.live_ips_process):
+                st.session_state.live_ips_message = "IPS đang chạy."
+            else:
+                try:
+                    st.session_state.live_ips_process = _start_live_ips_process(
+                        capture_interface,
+                        threshold,
+                        sim_mode,
+                    )
+                    mode = "simulation" if sim_mode else "live blocking"
+                    iface = capture_interface.strip() or "auto"
+                    st.session_state.live_ips_message = (
+                        f"Đã khởi chạy live_ips.py ({mode}) trên interface: {iface}. "
+                        "Nếu không thấy event, kiểm tra quyền bắt gói hoặc tên interface."
+                    )
+                except Exception as exc:
+                    st.session_state.live_ips_message = f"Không thể khởi chạy IPS: {exc}"
             st.rerun()
 
     with ctrl_col2:
         if st.button("⏹ Stop IPS", use_container_width=True):
-            st.session_state.ips_running = False
+            _stop_live_ips_process()
+            st.session_state.live_ips_message = "Đã dừng live_ips.py."
             st.rerun()
 
     with ctrl_col3:
@@ -665,7 +736,7 @@ with tab2:
             </div>
             """, unsafe_allow_html=True)
     else:
-        st.info("No events yet. Run `python live_ips.py --list-interfaces`, then start live capture on a Windows/Npcap interface.")
+        st.info("Chưa có event. Trên Victim hãy bấm Start IPS, sau đó chạy lệnh tấn công từ máy Attacker.")
 
 
 # ═══════════════════════════════════════════════════════════
