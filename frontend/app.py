@@ -800,8 +800,9 @@ python replay_ips.py --speed 0.2 --limit 500 --reset
 # Launch Dashboard
 streamlit run frontend/app.py
 
-# Start SDN/Ryu controller on Ubuntu demo environment
-./tools/run_sdn_controller.sh
+# Two-VM traffic demo
+python tools/ddos_traffic_generator.py --target <victim-ip> --attack benign --duration 20
+python tools/ddos_traffic_generator.py --target <victim-ip> --attack syn --duration 20
     """, language="powershell")
 
     st.markdown("---")

@@ -112,7 +112,6 @@ mlddos/
 │   │   ├── live_ips.py           # IPS thời gian thực (Scapy)
 │   │   ├── replay_ips.py         # Demo phát lại flow offline
 │   │   ├── mitigation.py         # Chặn/bỏ chặn IP (iptables/netsh)
-│   │   ├── sdn_ryu_detector.py   # Ryu/SDN controller (prototype)
 │   │   ├── shap_explainer.py     # Giải thích SHAP
 │   │   └── paths.py              # Quản lý đường dẫn
 │   └── requirements.txt
@@ -122,7 +121,6 @@ mlddos/
 │   └── ddos_detection_report_ready.ipynb   # Notebook báo cáo
 ├── tools/
 │   ├── ddos_traffic_generator.py  # Traffic generator cho VM attacker
-│   └── mininet_sdn_topology.py    # Topology Mininet (prototype)
 ├── tests/
 │   └── test_smoke_predict.py     # Kiểm thử predict_proba
 ├── data/                          # Dữ liệu CICDDoS2019
@@ -339,7 +337,7 @@ Hậu quả: mô hình học phân phối train nhưng test có phân phối kh�
          (ví dụ)                           (ví dụ)
 ```
 
-**Ưu điểm so với SDN:**
+**?u ?i?m c?a m? h?nh demo hai m?y ?o:**
 - Features được trích xuất **đầy đủ 77 features** từ Scapy (khớp 100% với training data CICFlowMeter).
 - Kịch bản tấn công rõ ràng, dễ giải thích cho hội đồng.
 - Dễ tái tạo — chỉ cần VirtualBox/VMware và 2 VM.
@@ -550,7 +548,7 @@ $env:PYTHONPATH="backend\src"; python -m ml_ddos.main --combine-resplit --cv-fol
 jupyter notebook notebooks/ddos_detection_report_ready.ipynb
 ```
 
-Notebook chạy toàn bộ pipeline và xuất kết quả phù hợp cho báo cáo: bảng metric, confusion matrix, biểu đồ so sánh models, kiểm tra SDN compatibility.
+Notebook ch?y to?n b? pipeline v? xu?t k?t qu? ph? h?p cho b?o c?o: b?ng metric, confusion matrix, bi?u ?? so s?nh models v? ki?m tra t??ng th?ch runtime IDS/IPS.
 
 ### 9.6. Chạy dashboard
 
@@ -597,7 +595,6 @@ sudo python3 tools/ddos_traffic_generator.py --target <VICTIM_IP> --attack all -
 
 1. **Kiểm thử trên traffic thật**: Thu thập dữ liệu từ mạng campus/enterprise để đánh giá generalization.
 2. **Tối ưu feature extraction live**: Giảm số features cần thiết, dùng feature selection để chỉ giữ top-K features quan trọng nhất.
-3. **Triển khai SDN**: Mở rộng sang SDN/Ryu controller với Mininet/Open vSwitch để demo mitigation tự động bằng flow rules (đã có prototype trong `sdn_ryu_detector.py`). Cần cải thiện feature extraction từ OVS flow stats — hiện tại OVS chỉ cung cấp được ~20/77 features.
 4. **Alerting**: Tích hợp cảnh báo Telegram/Email khi phát hiện tấn công.
 5. **Mở rộng dataset**: Kết hợp thêm CIC-IDS2017, UNSW-NB15 để tăng đa dạng attack patterns.
 6. **Deep Learning**: Thử nghiệm LSTM/CNN trên time-series flow features.
@@ -614,4 +611,4 @@ sudo python3 tools/ddos_traffic_generator.py --target <VICTIM_IP> --attack all -
 - **Demo 2 máy ảo**: VM Attacker sinh traffic DDoS (7 kịch bản), VM Victim chạy IDS/IPS phân loại thời gian thực bằng Scapy, features khớp 100% với training data.
 - **Nhiều hình thức demo**: Demo 2 VM thời gian thực, Replay offline, Dashboard Streamlit.
 
-Hệ thống có ý nghĩa thực tiễn trong việc hỗ trợ quản trị viên mạng phát hiện sớm các cuộc tấn công DDoS. Hướng phát triển tiếp theo bao gồm triển khai trên SDN controller để tự động chặn tấn công bằng flow rules và kiểm thử trên traffic mạng thực tế.
+H? th?ng c? ? ngh?a th?c ti?n trong vi?c h? tr? qu?n tr? vi?n m?ng ph?t hi?n s?m c?c cu?c t?n c?ng DDoS. H??ng ph?t tri?n ti?p theo bao g?m tri?n khai agent IDS/IPS tr?n traffic m?ng th?c t?, t?i ?u ?? tr? x? l? v? b? sung c? ch? c?nh b?o t? ??ng.

@@ -31,10 +31,10 @@ def code(source: str):
 cells = [
     md(
         """
-        # DDoS Detection using Machine Learning - SDN Ready
+        # DDoS Detection using Machine Learning - Two-VM IDS/IPS Ready
 
         Notebook này là bản rút gọn, sạch và phù hợp để đưa vào báo cáo đồ án,
-        đồng thời xuất mô hình theo đúng định dạng để Ryu/SDN controller sử dụng.
+        đồng thời xuất mô hình theo đúng định dạng để demo IDS/IPS hai m?y ?o sử dụng.
         Mục tiêu là xây dựng mô hình học máy phát hiện lưu lượng `Benign` và các
         nhóm tấn công DDoS trong bộ dữ liệu CICDDoS2019.
 
@@ -130,7 +130,6 @@ cells = [
             TrafficFeaturePreprocessor,
         )
         from ml_ddos.preprocessor import TARGET_COL, harmonize_labels, remove_duplicates
-        from ml_ddos.sdn_ryu_detector import CICDDOS_FEATURE_COLUMNS
 
         warnings.filterwarnings("ignore", category=ConvergenceWarning)
 
@@ -979,7 +978,7 @@ cells = [
                 {
                     "Kết quả dự kiến": "Trích xuất đặc trưng từ dữ liệu thô",
                     "Trạng thái trong code": "Một phần",
-                    "Bằng chứng": "Dataset hiện dùng flow-level features đã trích xuất sẵn; SDN demo chuyển flow stats thành vector đặc trưng",
+                    "B?ng ch?ng": "Dataset hi?n d?ng flow-level features ?? tr?ch xu?t s?n; demo hai m?y ?o sinh l?u l??ng ki?m th? v? h? th?ng IDS/IPS ph?n lo?i theo ??c tr?ng lu?ng",
                 },
                 {
                     "Kết quả dự kiến": "Trực quan hóa phân bố, confusion matrix, ROC",
@@ -1052,7 +1051,7 @@ cells = [
         final_summary.to_csv(summary_path, index=False)
         display(final_summary)
 
-        # Ryu/SDN controller expects the pickle object itself to expose
+        # demo IDS/IPS hai m?y ?o expects the pickle object itself to expose
         # predict_proba(features). Therefore selected_model.pkl stores the
         # fitted Pipeline directly, not a metadata dictionary.
         with open(model_path, "wb") as file:
@@ -1086,27 +1085,20 @@ cells = [
         print("Saved confusion matrix:", cm_path)
         print("Saved summary:", summary_path)
         print("Saved best model:", model_path)
-        print("Saved SDN selected model:", selected_model_path)
+        print("Saved selected IDS/IPS model:", selected_model_path)
         print("Saved selected model metadata:", metadata_path)
         """
     ),
-    md("## 15. SDN Controller Compatibility Check"),
+    md("## 15. IDS/IPS Runtime Compatibility Check"),
     code(
         """
         with open(selected_model_path, "rb") as file:
-            sdn_model = pickle.load(file)
+            runtime_model = pickle.load(file)
 
-        sdn_sample = pd.DataFrame([{column: 0.0 for column in CICDDOS_FEATURE_COLUMNS}])
-        sdn_sample["Protocol"] = 6
-        sdn_sample["Flow Duration"] = 1_000_000
-        sdn_sample["Total Fwd Packets"] = 10
-        sdn_sample["Fwd Packets Length Total"] = 600
-        sdn_sample["Flow Packets/s"] = 10
-        sdn_sample["Flow Bytes/s"] = 600
-
-        proba = sdn_model.predict_proba(sdn_sample)[0]
+        runtime_sample = X_test.head(1).copy()
+        proba = runtime_model.predict_proba(runtime_sample)[0]
         pred_index = int(np.argmax(proba))
-        sdn_check = pd.DataFrame(
+        runtime_check = pd.DataFrame(
             [
                 {
                     "selected_model_path": str(selected_model_path),
@@ -1114,11 +1106,11 @@ cells = [
                     "predicted_index": pred_index,
                     "predicted_label": class_names[pred_index],
                     "confidence": float(proba[pred_index]),
-                    "input_feature_count": sdn_sample.shape[1],
+                    "input_feature_count": runtime_sample.shape[1],
                 }
             ]
         )
-        display(sdn_check)
+        display(runtime_check)
         """
     ),
     md(

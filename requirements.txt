@@ -11,7 +11,7 @@ kagglehub==0.2.9
 jupyter==1.0.0
 ipykernel==6.29.5
 shap==0.44.1
-scapy==2.5.0
+scapy==2.5.0a
 streamlit==1.28.2
 requests==2.31.0
 fastapi==0.103.2

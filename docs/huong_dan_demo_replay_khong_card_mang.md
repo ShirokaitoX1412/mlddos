@@ -31,7 +31,7 @@ Nên dùng replay demo khi:
 - Card mạng vật lý bị lỗi hoặc không ổn định.
 - Không muốn dùng dual boot.
 - Không muốn dùng máy ảo.
-- Không muốn phụ thuộc Npcap, Mininet, Open vSwitch hoặc SDN.
+- Kh?ng mu?n ph? thu?c Npcap ho?c card m?ng v?t l?.
 - Cần một demo dễ chạy, có thể trình bày ổn định trong bảo vệ đồ án.
 
 ## 3. Chuẩn Bị
