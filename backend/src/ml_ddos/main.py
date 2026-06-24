@@ -16,7 +16,7 @@ import argparse
 import os
 
 from .data_loader import combine_and_resplit, load_dataset
-from .models import TrainingConfig, generate_markdown_report, train_and_evaluate_from_raw
+from .models import TrainingConfig, train_and_evaluate_from_raw
 from .paths import RESULTS_DIR as PROJECT_RESULTS_DIR
 from .preprocessor import generate_data_summary, harmonize_labels
 
@@ -91,21 +91,12 @@ def step3_train_evaluate(train_df, test_df, args):
     return val_scores, test_scores
 
 
-def step4_generate_report(val_scores, test_scores):
-    """Step 4: Generate comparison report and save."""
+def step4_print_summary(val_scores, test_scores):
+    """Step 4: Print best-model summary without generating report files."""
     print("\n" + "#" * 60)
-    print("#  STEP 4: GENERATING COMPARISON REPORT")
+    print("#  STEP 4: MODEL SUMMARY")
     print("#" * 60)
 
-    report_md = generate_markdown_report(val_scores, test_scores)
-
-    report_path = os.path.join(RESULTS_DIR, "comparison_report.md")
-    os.makedirs(RESULTS_DIR, exist_ok=True)
-    with open(report_path, "w") as f:
-        f.write(report_md)
-    print(f"  Report saved: {report_path}")
-
-    # Determine best model (column names vary by pipeline output format)
     val_f1_col = "CV F1-Score Mean" if "CV F1-Score Mean" in val_scores.columns else "F1-Score"
     test_f1_col = "Test F1-Score" if "Test F1-Score" in test_scores.columns else "F1-Score"
 
@@ -117,7 +108,6 @@ def step4_generate_report(val_scores, test_scores):
     print(f"  Best Model (Test F1):       {best_test} "
           f"(F1 = {test_scores.loc[best_test, test_f1_col]:.6f})")
 
-    return report_md
 
 
 def main():
@@ -172,11 +162,11 @@ def main():
     val_scores, test_scores = step3_train_evaluate(train_df, test_df, args)
 
     # Step 4
-    step4_generate_report(val_scores, test_scores)
+    step4_print_summary(val_scores, test_scores)
 
     print("\n" + "=" * 70)
     print("  ALL STEPS COMPLETE!")
-    print("  Check results/ for plots and reports.")
+    print("  Check results/ for metric CSVs and live logs.")
     print("  Check saved_models/ for trained model files.")
     print("=" * 70)
 

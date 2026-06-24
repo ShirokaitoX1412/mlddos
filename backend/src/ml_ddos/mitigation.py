@@ -1,18 +1,24 @@
 """
-mitigation.py - OS-Level Firewall Mitigation Commands
+OS-level mitigation helpers for the DDoS IDS/IPS demo.
 
-Handles blocking/unblocking attacker IPs via:
-  - Linux:   iptables -A INPUT -s <IP> -j DROP
-  - Windows: netsh advfirewall firewall add rule ...
+The victim machine can be Linux or Windows:
+- Linux: uses iptables when available, otherwise nftables when available.
+- Windows: uses Windows Firewall through netsh advfirewall.
 
-Includes a SIMULATION_MODE flag (default: True) that only prints
-the command instead of executing it — safe for demos and testing.
+By default, mitigation runs in simulation mode and only prints the command.
+Use live mode only in a controlled lab and with root/administrator privileges.
 """
 
-import subprocess
-import platform
+from __future__ import annotations
+
+import ctypes
 import logging
+import os
+import platform
+import shutil
+import subprocess
 from datetime import datetime
+from typing import Any
 
 
 logging.basicConfig(
@@ -21,168 +27,240 @@ logging.basicConfig(
 )
 logger = logging.getLogger("mitigation")
 
-# Safety toggle: when True, commands are printed but NOT executed
 SIMULATION_MODE = True
 
 
 def get_os_type() -> str:
-    """Detect operating system."""
+    """Return normalized OS name."""
     system = platform.system().lower()
+    if system.startswith("win"):
+        return "windows"
     if system == "linux":
         return "linux"
-    elif system == "windows":
-        return "windows"
-    else:
-        return system
+    if system == "darwin":
+        return "macos"
+    return system or "unknown"
 
 
-def block_ip(ip_address: str, reason: str = "DDoS Attack Detected",
-             simulation: bool = None) -> dict:
-    """Block an IP address using OS-level firewall rules.
-
-    Parameters
-    ----------
-    ip_address : str
-        IP address to block.
-    reason : str
-        Reason for blocking (logged).
-    simulation : bool or None
-        Override SIMULATION_MODE if provided.
-
-    Returns
-    -------
-    dict
-        Result with keys: success, command, message, timestamp, simulated
-    """
-    sim = simulation if simulation is not None else SIMULATION_MODE
+def is_elevated() -> bool:
+    """Return whether current process can modify firewall rules."""
     os_type = get_os_type()
-    timestamp = datetime.now().isoformat()
-
+    if os_type == "windows":
+        try:
+            return bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except Exception:
+            return False
     if os_type == "linux":
-        command = f"iptables -A INPUT -s {ip_address} -j DROP"
-    elif os_type == "windows":
-        rule_name = f"BLOCK_DDoS_{ip_address.replace('.', '_')}"
+        return hasattr(os, "geteuid") and os.geteuid() == 0
+    return False
+
+
+def get_mitigation_backend(preferred: str = "auto") -> str:
+    """Choose the firewall backend for the current OS."""
+    preferred = (preferred or "auto").lower()
+    if preferred != "auto":
+        return preferred
+
+    os_type = get_os_type()
+    if os_type == "windows":
+        return "windows_firewall"
+    if os_type == "linux":
+        if shutil.which("iptables"):
+            return "iptables"
+        if shutil.which("nft"):
+            return "nftables"
+        return "linux_manual"
+    return "manual"
+
+
+def get_mitigation_status(preferred_backend: str = "auto") -> dict[str, Any]:
+    """Return OS/backend information for dashboard and logs."""
+    backend = get_mitigation_backend(preferred_backend)
+    return {
+        "os": get_os_type(),
+        "backend": backend,
+        "elevated": is_elevated(),
+        "simulation_default": SIMULATION_MODE,
+        "iptables_available": bool(shutil.which("iptables")),
+        "nft_available": bool(shutil.which("nft")),
+        "netsh_available": bool(shutil.which("netsh")) if get_os_type() == "windows" else False,
+    }
+
+
+def _rule_name(ip_address: str) -> str:
+    safe_ip = ip_address.replace(".", "_").replace(":", "_")
+    return f"MLDDoS_BLOCK_{safe_ip}"
+
+
+def _build_block_command(
+    ip_address: str,
+    backend: str,
+) -> tuple[str, list[str] | str | None, bool]:
+    rule_name = _rule_name(ip_address)
+
+    if backend == "iptables":
+        argv = ["iptables", "-I", "INPUT", "-s", ip_address, "-j", "DROP"]
+        return " ".join(argv), argv, False
+
+    if backend == "nftables":
+        argv = ["nft", "add", "rule", "inet", "filter", "input", "ip", "saddr", ip_address, "drop"]
+        return " ".join(argv), argv, False
+
+    if backend == "windows_firewall":
         command = (
             f'netsh advfirewall firewall add rule name="{rule_name}" '
-            f'dir=in action=block remoteip={ip_address} '
-            f'protocol=any enable=yes'
+            f'dir=in action=block remoteip={ip_address} protocol=any profile=any enable=yes'
         )
-    else:
-        command = f"# Unsupported OS: {os_type} — manual block required for {ip_address}"
+        return command, command, True
 
-    result = {
+    return f"# Unsupported backend {backend}: manually block {ip_address}", None, False
+
+
+def _build_unblock_command(
+    ip_address: str,
+    backend: str,
+) -> tuple[str, list[str] | str | None, bool]:
+    rule_name = _rule_name(ip_address)
+
+    if backend == "iptables":
+        argv = ["iptables", "-D", "INPUT", "-s", ip_address, "-j", "DROP"]
+        return " ".join(argv), argv, False
+
+    if backend == "nftables":
+        command = "# nftables delete requires a rule handle; inspect with: nft list ruleset"
+        return command, None, False
+
+    if backend == "windows_firewall":
+        command = f'netsh advfirewall firewall delete rule name="{rule_name}"'
+        return command, command, True
+
+    return f"# Unsupported backend {backend}: manually unblock {ip_address}", None, False
+
+
+def _base_result(ip_address: str, reason: str, simulation: bool, backend: str, command: str) -> dict[str, Any]:
+    return {
         "success": False,
         "command": command,
         "ip": ip_address,
         "reason": reason,
-        "timestamp": timestamp,
-        "simulated": sim,
-        "os": os_type,
+        "timestamp": datetime.now().isoformat(),
+        "simulated": simulation,
+        "os": get_os_type(),
+        "backend": backend,
+        "elevated": is_elevated(),
     }
 
+
+def block_ip(
+    ip_address: str,
+    reason: str = "DDoS Attack Detected",
+    simulation: bool | None = None,
+    backend: str = "auto",
+) -> dict[str, Any]:
+    """Block an attacker IP with the correct OS firewall command."""
+    sim = simulation if simulation is not None else SIMULATION_MODE
+    selected_backend = get_mitigation_backend(backend)
+    command, argv, use_shell = _build_block_command(ip_address, selected_backend)
+    result = _base_result(ip_address, reason, sim, selected_backend, command)
+
     if sim:
-        logger.warning(
-            f"[SIMULATION] Would execute: {command} | Reason: {reason}"
-        )
+        logger.warning("[SIMULATION] Would execute: %s | Reason: %s", command, reason)
         result["success"] = True
-        result["message"] = "SIMULATION: Command printed but NOT executed."
+        result["message"] = "SIMULATION: firewall command was not executed."
         return result
 
-    # Actually execute the command
-    try:
-        logger.critical(f"[LIVE] Executing firewall rule: {command}")
-        if os_type == "linux":
-            subprocess.run(
-                ["iptables", "-A", "INPUT", "-s", ip_address, "-j", "DROP"],
-                check=True, capture_output=True, text=True
-            )
-        elif os_type == "windows":
-            subprocess.run(command, shell=True, check=True, capture_output=True, text=True)
+    if argv is None:
+        result["message"] = f"Unsupported mitigation backend: {selected_backend}"
+        logger.error(result["message"])
+        return result
 
-        result["success"] = True
-        result["message"] = f"IP {ip_address} blocked successfully."
-        logger.critical(f"[LIVE] IP {ip_address} BLOCKED. Reason: {reason}")
-
-    except subprocess.CalledProcessError as e:
-        result["message"] = f"Failed to block IP: {e.stderr}"
-        logger.error(f"[LIVE] Failed to block {ip_address}: {e.stderr}")
-    except PermissionError:
+    if not result["elevated"]:
         result["message"] = "Permission denied. Run as root/administrator."
         logger.error("[LIVE] Permission denied. Requires elevated privileges.")
-
-    return result
-
-
-def unblock_ip(ip_address: str, simulation: bool = None) -> dict:
-    """Remove a firewall block rule for an IP address.
-
-    Parameters
-    ----------
-    ip_address : str
-        IP address to unblock.
-    simulation : bool or None
-        Override SIMULATION_MODE if provided.
-
-    Returns
-    -------
-    dict
-        Result dict.
-    """
-    sim = simulation if simulation is not None else SIMULATION_MODE
-    os_type = get_os_type()
-    timestamp = datetime.now().isoformat()
-
-    if os_type == "linux":
-        command = f"iptables -D INPUT -s {ip_address} -j DROP"
-    elif os_type == "windows":
-        rule_name = f"BLOCK_DDoS_{ip_address.replace('.', '_')}"
-        command = f'netsh advfirewall firewall delete rule name="{rule_name}"'
-    else:
-        command = f"# Unsupported OS — manual unblock required for {ip_address}"
-
-    result = {
-        "success": False,
-        "command": command,
-        "ip": ip_address,
-        "timestamp": timestamp,
-        "simulated": sim,
-        "os": os_type,
-    }
-
-    if sim:
-        logger.info(f"[SIMULATION] Would execute: {command}")
-        result["success"] = True
-        result["message"] = "SIMULATION: Unblock command printed but NOT executed."
         return result
 
     try:
-        logger.info(f"[LIVE] Removing firewall rule: {command}")
-        if os_type == "linux":
-            subprocess.run(
-                ["iptables", "-D", "INPUT", "-s", ip_address, "-j", "DROP"],
-                check=True, capture_output=True, text=True
-            )
-        elif os_type == "windows":
-            subprocess.run(command, shell=True, check=True, capture_output=True, text=True)
-
+        logger.critical("[LIVE] Executing firewall rule: %s", command)
+        completed = subprocess.run(
+            argv,
+            shell=use_shell,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
         result["success"] = True
-        result["message"] = f"IP {ip_address} unblocked successfully."
-        logger.info(f"[LIVE] IP {ip_address} unblocked.")
-
-    except subprocess.CalledProcessError as e:
-        result["message"] = f"Failed to unblock IP: {e.stderr}"
-        logger.error(f"[LIVE] Failed to unblock {ip_address}: {e.stderr}")
+        result["stdout"] = completed.stdout
+        result["stderr"] = completed.stderr
+        result["message"] = f"IP {ip_address} blocked successfully."
+        logger.critical("[LIVE] IP %s BLOCKED. Reason: %s", ip_address, reason)
+    except subprocess.CalledProcessError as exc:
+        result["stdout"] = exc.stdout
+        result["stderr"] = exc.stderr
+        result["message"] = f"Failed to block IP: {exc.stderr or exc}"
+        logger.error("[LIVE] Failed to block %s: %s", ip_address, result["message"])
+    except FileNotFoundError as exc:
+        result["message"] = f"Firewall command not found: {exc}"
+        logger.error(result["message"])
 
     return result
 
 
-def list_blocked_ips(simulation: bool = None) -> list:
-    """List currently blocked IPs (Linux only via iptables)."""
+def unblock_ip(
+    ip_address: str,
+    simulation: bool | None = None,
+    backend: str = "auto",
+) -> dict[str, Any]:
+    """Remove a previously installed firewall block when supported."""
     sim = simulation if simulation is not None else SIMULATION_MODE
-    os_type = get_os_type()
+    selected_backend = get_mitigation_backend(backend)
+    command, argv, use_shell = _build_unblock_command(ip_address, selected_backend)
+    result = _base_result(ip_address, "Unblock requested", sim, selected_backend, command)
 
-    if os_type != "linux":
-        logger.info(f"[{os_type}] Listing blocked IPs not supported on this OS.")
+    if sim:
+        logger.info("[SIMULATION] Would execute: %s", command)
+        result["success"] = True
+        result["message"] = "SIMULATION: unblock command was not executed."
+        return result
+
+    if argv is None:
+        result["message"] = f"Unsupported unblock operation for backend: {selected_backend}"
+        logger.error(result["message"])
+        return result
+
+    if not result["elevated"]:
+        result["message"] = "Permission denied. Run as root/administrator."
+        logger.error("[LIVE] Permission denied. Requires elevated privileges.")
+        return result
+
+    try:
+        logger.info("[LIVE] Removing firewall rule: %s", command)
+        completed = subprocess.run(
+            argv,
+            shell=use_shell,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        result["success"] = True
+        result["stdout"] = completed.stdout
+        result["stderr"] = completed.stderr
+        result["message"] = f"IP {ip_address} unblocked successfully."
+    except subprocess.CalledProcessError as exc:
+        result["stdout"] = exc.stdout
+        result["stderr"] = exc.stderr
+        result["message"] = f"Failed to unblock IP: {exc.stderr or exc}"
+        logger.error("[LIVE] Failed to unblock %s: %s", ip_address, result["message"])
+
+    return result
+
+
+def list_blocked_ips(simulation: bool | None = None, backend: str = "auto") -> list[str]:
+    """List blocked IPs for iptables. Other backends return an empty list."""
+    sim = simulation if simulation is not None else SIMULATION_MODE
+    selected_backend = get_mitigation_backend(backend)
+
+    if selected_backend != "iptables":
+        logger.info("[%s] Listing blocked IPs is not implemented.", selected_backend)
         return []
 
     if sim:
@@ -192,40 +270,33 @@ def list_blocked_ips(simulation: bool = None) -> list:
     try:
         result = subprocess.run(
             ["iptables", "-L", "INPUT", "-n", "--line-numbers"],
-            capture_output=True, text=True, check=True
+            capture_output=True,
+            text=True,
+            check=True,
         )
-        lines = result.stdout.strip().split("\n")
-        blocked = []
-        for line in lines:
-            if "DROP" in line:
-                parts = line.split()
-                for part in parts:
-                    if _is_ip(part):
-                        blocked.append(part)
-                        break
-        return blocked
-    except Exception as e:
-        logger.error(f"Failed to list blocked IPs: {e}")
+    except Exception as exc:
+        logger.error("Failed to list blocked IPs: %s", exc)
         return []
 
+    blocked = []
+    for line in result.stdout.splitlines():
+        if "DROP" not in line:
+            continue
+        for part in line.split():
+            if _is_ip(part):
+                blocked.append(part)
+                break
+    return blocked
 
-def _is_ip(s: str) -> bool:
-    """Check if a string looks like an IPv4 address."""
-    parts = s.split(".")
+
+def _is_ip(value: str) -> bool:
+    parts = value.split(".")
     if len(parts) != 4:
         return False
-    return all(p.isdigit() and 0 <= int(p) <= 255 for p in parts)
+    return all(part.isdigit() and 0 <= int(part) <= 255 for part in parts)
 
 
 if __name__ == "__main__":
-    print(f"OS: {get_os_type()}")
-    print(f"SIMULATION_MODE: {SIMULATION_MODE}")
-    print()
-
-    # Demo: simulate blocking
-    r = block_ip("192.168.1.100", reason="Demo: TCP SYN Flood detected")
-    print(f"Result: {r}")
-    print()
-
-    r2 = unblock_ip("192.168.1.100")
-    print(f"Result: {r2}")
+    print(get_mitigation_status())
+    print(block_ip("192.168.56.10", reason="Demo attack", simulation=True))
+    print(unblock_ip("192.168.56.10", simulation=True))

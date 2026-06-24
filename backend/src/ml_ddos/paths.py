@@ -9,4 +9,3 @@ PROJECT_ROOT = PACKAGE_DIR.parents[2]
 DATA_DIR = PROJECT_ROOT / "data"
 RESULTS_DIR = PROJECT_ROOT / "results"
 MODELS_DIR = PROJECT_ROOT / "saved_models"
-AUDIT_DIR = PROJECT_ROOT / "audit_results"

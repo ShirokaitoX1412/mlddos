@@ -1,6 +1,0 @@
-Kết quả dự kiến,Trạng thái trong code,Bằng chứng
-Xây dựng mô hình phát hiện DDoS bằng học máy,Đã có,"Có pipeline huấn luyện, so sánh model và selected_model.pkl"
-Kiểm soát tỉ lệ báo động giả,Đã bổ sung,False Alarm Rate được tính cho từng model
-Phân loại các dạng DDoS có trong dataset,Đã có trong phạm vi dataset,"Benign, LDAP Flood, MSSQL Flood, NetBIOS Flood, TCP SYN Flood, UDP Flood, UDP-Lag Flood"
-Trích xuất đặc trưng từ dữ liệu thô,Một phần,Dataset hiện dùng flow-level features đã trích xuất sẵn; SDN demo chuyển flow stats thành vector đặc trưng
-"Trực quan hóa phân bố, confusion matrix, ROC",Đã bổ sung,"report_figures chứa biểu đồ phân bố, so sánh model, confusion matrix và ROC"
