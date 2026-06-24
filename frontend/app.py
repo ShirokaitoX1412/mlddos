@@ -1,17 +1,15 @@
 """
-app.py - Professional Streamlit Dashboard for DDoS IPS
+app.py - Streamlit dashboard for the DDoS IDS/IPS demo.
 
-Dark-mode, high-tech UI with:
-  - Analytics Tab: Model comparison, ROC curves, report figures
-  - Live Monitor Tab: Real-time traffic log with RED attack alerts
-  - Settings Tab: local IDS/IPS simulation controls
-
-Usage:
-    streamlit run app.py
+The dashboard focuses on the live two-VM demo:
+  - Live Monitor: real-time IDS/IPS events.
+  - Settings: local agent and attack command reference.
 """
 
 import os
+import ipaddress
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import time
@@ -26,14 +24,23 @@ import streamlit as st  # noqa: E402
 import pandas as pd  # noqa: E402
 import numpy as np  # noqa: E402
 
-from ml_ddos.paths import AUDIT_DIR, MODELS_DIR, RESULTS_DIR  # noqa: E402
+from ml_ddos.paths import MODELS_DIR, RESULTS_DIR  # noqa: E402
 
 RESULTS_DIR = str(RESULTS_DIR)
 MODELS_DIR = str(MODELS_DIR)
-AUDIT_DIR = str(AUDIT_DIR)
 BACKEND_API_URL = os.getenv("BACKEND_API_URL", "").rstrip("/")
 LIVE_EVENTS_CSV = os.path.join(RESULTS_DIR, "live_events.csv")
+LIVE_IPS_PROCESS_LOG = os.path.join(RESULTS_DIR, "live_ips_process.log")
 LIVE_IPS_ENTRYPOINT = PROJECT_ROOT / "live_ips.py"
+LINUX_SERVICE_NAME = "mlddos-victim-agent.service"
+DEFAULT_DISPLAY_ATTACK_THRESHOLD = 0.80
+LIVE_EVENT_COLUMNS = [
+    "timestamp", "src_ip", "dst_ip", "protocol",
+    "fwd_packets", "bwd_packets", "prediction", "confidence",
+    "is_attack", "blocked", "simulation", "model", "interface",
+    "victim_os", "mitigation_backend", "mitigation_elevated",
+    "block_command", "block_message", "source",
+]
 
 
 def _get_backend_health() -> dict:
@@ -53,6 +60,13 @@ def _get_backend_health() -> dict:
             "response": body,
             "url": BACKEND_API_URL,
         }
+    except Exception as e:
+        return {
+            "configured": True,
+            "healthy": False,
+            "error": str(e),
+            "url": BACKEND_API_URL,
+        }
 
 
 def _is_process_running(process) -> bool:
@@ -60,29 +74,62 @@ def _is_process_running(process) -> bool:
     return process is not None and process.poll() is None
 
 
-def _start_live_ips_process(interface: str, threshold: float, simulation: bool):
+def _start_live_ips_process(
+    interface: str,
+    victim_ip: str,
+    threshold: float,
+    simulation: bool,
+    mitigation_backend: str,
+):
     """Start live_ips.py from the dashboard without adding another script."""
-    command = [
+    base_command = [
         sys.executable,
         str(LIVE_IPS_ENTRYPOINT),
+        "--model",
+        "selected_model",
         "--threshold",
         str(threshold),
         "--events-csv",
         LIVE_EVENTS_CSV,
+        "--mitigation-backend",
+        mitigation_backend,
+        "--cicflowmeter",
+        "--cic-window",
+        "2",
+        "--fast-log",
+        "--cicflowmeter-cmd",
+        "cicflowmeter -f {pcap} -c {csv}",
     ]
     if interface.strip():
-        command.extend(["--interface", interface.strip()])
+        base_command.extend(["--interface", interface.strip()])
+    if victim_ip.strip():
+        base_command.extend(["--victim-ip", victim_ip.strip()])
     if not simulation:
-        command.append("--live")
+        base_command.append("--live")
 
     env = os.environ.copy()
     env["PYTHONPATH"] = str(BACKEND_SRC)
+    command = base_command
+    process_env = env
+
+    if hasattr(os, "geteuid") and os.geteuid() != 0:
+        pkexec = shutil.which("pkexec")
+        if not pkexec:
+            raise RuntimeError("Root permission is required for packet capture. Install pkexec or run dashboard with sudo.")
+        command = [pkexec, "env", f"PYTHONPATH={BACKEND_SRC}", *base_command]
+        process_env = None
+
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    with open(LIVE_IPS_PROCESS_LOG, "w", encoding="utf-8") as log_file:
+        log_file.write("Command: " + " ".join(str(part) for part in command) + "\n")
+
+    log_file = open(LIVE_IPS_PROCESS_LOG, "a", encoding="utf-8")
     return subprocess.Popen(
         command,
         cwd=str(PROJECT_ROOT),
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        env=process_env,
+        stdout=log_file,
+        stderr=log_file,
         text=True,
     )
 
@@ -97,13 +144,59 @@ def _stop_live_ips_process():
         except subprocess.TimeoutExpired:
             process.kill()
     st.session_state.live_ips_process = None
-    except Exception as e:
-        return {
-            "configured": True,
-            "healthy": False,
-            "error": str(e),
-            "url": BACKEND_API_URL,
-        }
+
+
+def _reset_live_events_log() -> None:
+    """Start a clean live monitoring log for the current demo run."""
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    pd.DataFrame(columns=LIVE_EVENT_COLUMNS).to_csv(LIVE_EVENTS_CSV, index=False)
+
+
+def _tail_file(path: str, lines: int = 12) -> str:
+    if not os.path.exists(path):
+        return "No process log was created."
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as file:
+            content = file.readlines()
+        return "".join(content[-lines:]).strip() or "Process log is empty."
+    except Exception as exc:
+        return f"Could not read process log: {exc}"
+
+
+def _systemd_service_status(service_name: str = LINUX_SERVICE_NAME) -> dict:
+    """Read Kali/Linux background agent status."""
+    systemctl = shutil.which("systemctl")
+    if not systemctl:
+        return {"available": False, "active": False, "state": "unavailable", "detail": "systemctl not found"}
+
+    state = subprocess.run(
+        [systemctl, "is-active", service_name],
+        capture_output=True,
+        text=True,
+    )
+    enabled = subprocess.run(
+        [systemctl, "is-enabled", service_name],
+        capture_output=True,
+        text=True,
+    )
+    return {
+        "available": True,
+        "active": state.stdout.strip() == "active",
+        "state": state.stdout.strip() or state.stderr.strip() or "unknown",
+        "enabled": enabled.stdout.strip() or enabled.stderr.strip() or "unknown",
+    }
+
+
+def _systemd_recent_logs(service_name: str = LINUX_SERVICE_NAME, lines: int = 25) -> str:
+    journalctl = shutil.which("journalctl")
+    if not journalctl:
+        return "journalctl not found"
+    result = subprocess.run(
+        [journalctl, "-u", service_name, "-n", str(lines), "--no-pager"],
+        capture_output=True,
+        text=True,
+    )
+    return (result.stdout or result.stderr or "").strip()
 
 
 def _generate_demo_events(threshold: float, n: int = 15) -> list:
@@ -150,6 +243,24 @@ def _as_bool(value) -> bool:
     return str(value).strip().lower() in {"true", "1", "yes", "y"}
 
 
+def _is_noise_destination(ip_value) -> bool:
+    """Hide broadcast/multicast background traffic from attack alert panels."""
+    try:
+        ip_obj = ipaddress.ip_address(str(ip_value).strip())
+    except ValueError:
+        return False
+    return ip_obj.is_multicast or str(ip_obj).endswith(".255")
+
+
+def _is_confirmed_attack(event: dict, threshold: float) -> bool:
+    """Treat an event as an attack only when confidence is high enough."""
+    if not event.get("is_attack", False):
+        return False
+    if _is_noise_destination(event.get("dst_ip", "")):
+        return False
+    return float(event.get("confidence", 0.0) or 0.0) >= threshold
+
+
 def _load_real_ips_events(limit: int = 500) -> list:
     """Load real live IPS events written to results/live_events.csv."""
     if not os.path.exists(LIVE_EVENTS_CSV):
@@ -163,8 +274,17 @@ def _load_real_ips_events(limit: int = 500) -> list:
     if df.empty:
         return []
 
+    if "source" in df.columns:
+        df = df[df["source"].fillna("").astype(str).str.lower().isin(["live_ips", ""])]
+    elif "actual_label" in df.columns:
+        # Ignore old offline-demo logs on the real-time Victim dashboard.
+        return []
+
+    if df.empty:
+        return []
+
     df = df.tail(limit).copy()
-    for col in ("is_attack", "blocked", "simulation"):
+    for col in ("is_attack", "blocked", "simulation", "mitigation_elevated"):
         if col in df.columns:
             df[col] = df[col].map(_as_bool)
     if "confidence" in df.columns:
@@ -208,36 +328,6 @@ def _highlight_metric_columns(df: pd.DataFrame) -> list[str]:
     return cols
 
 
-def _format_metric(value, digits: int = 4) -> str:
-    """Format numeric metrics consistently for the report-ready dashboard."""
-    try:
-        if pd.isna(value):
-            return "N/A"
-        return f"{float(value):.{digits}f}"
-    except Exception:
-        return str(value)
-
-
-def _load_report_ready_outputs() -> dict:
-    """Load the current report-ready training outputs."""
-    report_dir = Path(RESULTS_DIR)
-    figures_dir = report_dir / "report_figures"
-    paths = {
-        "summary": report_dir / "report_ready_final_summary.csv",
-        "comparison": report_dir / "report_ready_model_comparison.csv",
-        "classification": report_dir / "report_ready_classification_report.csv",
-        "confusion": report_dir / "report_ready_confusion_matrix.csv",
-        "figures": figures_dir / "danh_muc_hinh_sinh_tu_notebook.csv",
-    }
-    loaded = {"paths": paths, "figures_dir": figures_dir}
-    for key, path in paths.items():
-        if key == "figures":
-            continue
-        loaded[key] = pd.read_csv(path) if path.exists() else pd.DataFrame()
-    loaded["figures"] = pd.read_csv(paths["figures"]) if paths["figures"].exists() else pd.DataFrame()
-    return loaded
-
-
 def _metric_card(label: str, value: str, color: str = "#00d4ff") -> None:
     st.markdown(
         f"""
@@ -249,15 +339,15 @@ def _metric_card(label: str, value: str, color: str = "#00d4ff") -> None:
         unsafe_allow_html=True,
     )
 
-# ─── Page Config ───────────────────────────────────────────
+# â”€â”€â”€ Page Config â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 st.set_page_config(
     page_title="DDoS IPS Dashboard",
-    page_icon="🛡️",
+    page_icon="IDS",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# ─── Dark Theme CSS ────────────────────────────────────────
+# â”€â”€â”€ Dark Theme CSS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 st.markdown("""
 <style>
     /* Main background */
@@ -405,16 +495,166 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# ─── Header ────────────────────────────────────────────────
+# â”€â”€â”€ Header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 st.markdown("""
 <div class="dashboard-header">
     <p class="dashboard-title">DDoS IPS COMMAND CENTER</p>
-    <p class="dashboard-subtitle">Real-Time Intrusion Prevention System | CICDDoS2019 | ML-Powered</p>
+    <p class="dashboard-subtitle">Kali Victim Live IDS/IPS Monitor</p>
 </div>
 """, unsafe_allow_html=True)
 
 
-# ─── Sidebar ───────────────────────────────────────────────
+with st.sidebar:
+    service_status = _systemd_service_status()
+
+    st.markdown("### IPS Agent")
+    st.markdown(f"**Time:** {datetime.now().strftime('%H:%M:%S')}")
+    if service_status["active"]:
+        st.success("Agent service: ACTIVE")
+    else:
+        st.error(f"Agent service: {service_status['state']}")
+    st.caption(f"Startup: {service_status.get('enabled', 'unknown')}")
+    st.caption("Victim interface: eth1 / 192.168.56.103")
+
+    st.markdown("---")
+    st.markdown("### Alert Filter")
+    display_attack_threshold = st.slider(
+        "Minimum attack confidence",
+        0.50,
+        1.00,
+        DEFAULT_DISPLAY_ATTACK_THRESHOLD,
+        0.05,
+    )
+    st.caption("Only high-confidence ML detections are shown as attacks.")
+
+    st.markdown("---")
+    st.markdown("### Install / Repair")
+    st.code(
+        "sudo python3 app.py --install-victim-app --interface eth1 --live-agent",
+        language="bash",
+    )
+    st.caption("Ubuntu Attacker sends traffic. Kali Victim agent detects and blocks automatically.")
+
+
+st.markdown("## Live IDS/IPS Monitor")
+
+if "ips_events" not in st.session_state:
+    st.session_state.ips_events = []
+if "live_ips_process" not in st.session_state:
+    st.session_state.live_ips_process = None
+if "live_ips_message" not in st.session_state:
+    st.session_state.live_ips_message = ""
+
+st.session_state.ips_running = service_status["active"]
+
+real_events = _load_real_ips_events()
+display_events = real_events if real_events else st.session_state.ips_events
+visible_events = [
+    event for event in display_events
+    if not _is_noise_destination(event.get("dst_ip", ""))
+]
+confirmed_attacks = [
+    event for event in visible_events
+    if _is_confirmed_attack(event, display_attack_threshold)
+]
+using_real_events = bool(real_events)
+
+if using_real_events:
+    st.success("Reading live IDS/IPS events from the monitoring log.")
+elif service_status["active"]:
+    st.info("Agent is running. Waiting for traffic from Ubuntu Attacker.")
+else:
+    st.warning("Agent service is not running. Install or repair the service from the sidebar command.")
+
+if st.session_state.live_ips_message:
+    st.caption(st.session_state.live_ips_message)
+
+status_col1, status_col2, status_col3, status_col4 = st.columns(4)
+with status_col1:
+    _metric_card("Total Events", str(len(visible_events)))
+with status_col2:
+    attacks = len(confirmed_attacks)
+    _metric_card("Attacks Detected", str(attacks), "#ff1744")
+with status_col3:
+    blocked = sum(1 for event in visible_events if event.get("blocked"))
+    _metric_card("IPs Blocked", str(blocked), "#ff9800")
+with status_col4:
+    ips_status = "ACTIVE" if st.session_state.ips_running else "STANDBY"
+    status_color = "#00c853" if st.session_state.ips_running else "#8b949e"
+    _metric_card("IPS Status", ips_status, status_color)
+
+st.markdown("---")
+
+recent_attacks = [
+    event for event in visible_events[-30:]
+    if _is_confirmed_attack(event, display_attack_threshold)
+]
+if recent_attacks:
+    last_attack = recent_attacks[-1]
+    st.markdown(f"""
+    <div class="attack-alert">
+        ATTACK DETECTED: {last_attack.get('prediction', 'Unknown')}
+        <br>Source: {last_attack.get('src_ip', 'N/A')} -> {last_attack.get('dst_ip', 'N/A')}
+        <br>Confidence: {last_attack.get('confidence', 0):.1%}
+        {'<br>IP BLOCKED' if last_attack.get('blocked') else ''}
+    </div>
+    """, unsafe_allow_html=True)
+else:
+    st.markdown("""
+    <div class="benign-status">
+        SYSTEM NORMAL - No threats detected
+    </div>
+    """, unsafe_allow_html=True)
+
+st.markdown("---")
+
+ctrl_col1, ctrl_col2 = st.columns([1, 2])
+with ctrl_col1:
+    if st.button("Refresh Log", type="primary", use_container_width=True):
+        st.rerun()
+with ctrl_col2:
+    st.caption("The IPS agent runs automatically as a Kali system service, similar to a firewall.")
+
+if not service_status["active"]:
+    with st.expander("Service diagnostic log"):
+        st.code(_systemd_recent_logs(), language="text")
+
+st.markdown("### Monitoring Log")
+if display_events:
+    for event in reversed(visible_events[-80:]):
+        is_attack = _is_confirmed_attack(event, display_attack_threshold)
+        is_blocked = event.get("blocked", False)
+
+        if is_blocked:
+            css_class = "log-blocked"
+            icon = "[BLOCKED]"
+        elif is_attack:
+            css_class = "log-attack"
+            icon = "[ATTACK]"
+        elif event.get("is_attack", False):
+            css_class = "log-benign"
+            icon = "[LOW CONF]"
+        else:
+            css_class = "log-benign"
+            icon = "[OK]"
+
+        st.markdown(f"""
+        <div class="log-entry {css_class}">
+            {icon} [{event.get('timestamp', '')}]
+            {event.get('src_ip', 'N/A')} -> {event.get('dst_ip', 'N/A')} |
+            <b>{event.get('prediction', 'Unknown')}</b>
+            ({event.get('confidence', 0):.1%})
+            | {event.get('victim_os', 'kali')}/{event.get('mitigation_backend', 'auto')}
+            {'| BLOCKED' if is_blocked else ''}
+        </div>
+        """, unsafe_allow_html=True)
+else:
+    st.info("No monitoring log yet.")
+
+st.stop()
+
+
+# â”€â”€â”€ Sidebar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 with st.sidebar:
     st.markdown("### System Status")
     st.markdown(f"**Time:** {datetime.now().strftime('%H:%M:%S')}")
@@ -437,8 +677,19 @@ with st.sidebar:
     capture_interface = st.text_input(
         "Capture Interface",
         value="",
-        placeholder="Để trống = auto, hoặc nhập enp0s3/eth0/Npcap...",
-        help="Trên Ubuntu VM thường là enp0s3 hoặc eth0. Xem bằng lệnh: ip a",
+        placeholder="Leave empty for auto, or enter eth0/enp0s3...",
+        help="On Kali Victim, check the interface name with: ip a",
+    )
+    victim_ip = st.text_input(
+        "Victim IP",
+        value="192.168.56.103",
+        help="Only flows whose destination is this IP are evaluated.",
+    )
+    mitigation_backend = st.selectbox(
+        "Mitigation Backend",
+        ["auto", "iptables", "nftables", "windows_firewall", "manual"],
+        index=0,
+        help="auto selects iptables/nftables on Kali/Linux.",
     )
 
     st.markdown("---")
@@ -450,140 +701,12 @@ with st.sidebar:
     - 7 Attack Classes
     """)
 
-# ─── Tabs ──────────────────────────────────────────────────
-tab1, tab2, tab_audit, tab3 = st.tabs([
-    "📊 Analytics",
-    "🔴 Live Monitor",
-    "🧪 Audit",
-    "⚙️ Settings",
-])
+# â”€â”€â”€ Tabs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+tab_live, tab_settings = st.tabs(["Live Monitor", "Settings"])
 
 
-# ═══════════════════════════════════════════════════════════
-#  TAB 1: ANALYTICS
-# ═══════════════════════════════════════════════════════════
-with tab1:
-    st.markdown("## Model Performance Analytics")
-
-    outputs = _load_report_ready_outputs()
-    summary_df = outputs["summary"]
-    comparison_df = outputs["comparison"]
-    classification_df = outputs["classification"]
-    confusion_df = outputs["confusion"]
-    figures_df = outputs["figures"]
-
-    if summary_df.empty or comparison_df.empty:
-        st.warning(
-            "Chưa có kết quả huấn luyện mới nhất. Vui lòng chạy lại notebook báo cáo trước khi mở dashboard."
-        )
-    else:
-        summary = summary_df.iloc[0]
-        comparison_df = comparison_df.copy()
-        comparison_df["Model Display"] = (
-            comparison_df["Model"].astype(str)
-            + " | "
-            + comparison_df["Imbalance Method"].fillna("").astype(str).replace("", "baseline")
-        )
-
-        st.caption("Dashboard đang sử dụng bộ kết quả huấn luyện mới nhất của hệ thống.")
-
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            _metric_card("Best Model", str(summary.get("best_model", "N/A")), "#00d4ff")
-        with col2:
-            _metric_card("Accuracy", _format_metric(summary.get("accuracy")), "#55A868")
-        with col3:
-            _metric_card("Macro F1", _format_metric(summary.get("macro_f1")), "#C44E52")
-        with col4:
-            _metric_card("ROC-AUC macro OvR", _format_metric(summary.get("roc_auc_macro_ovr")), "#DD8452")
-
-        col5, col6, col7, col8 = st.columns(4)
-        with col5:
-            _metric_card("Weighted F1", _format_metric(summary.get("weighted_f1")), "#64B5CD")
-        with col6:
-            _metric_card("False Alarm Rate", _format_metric(summary.get("false_alarm_rate")), "#ff9800")
-        with col7:
-            _metric_card("Attack Recall", _format_metric(summary.get("attack_recall")), "#ff1744")
-        with col8:
-            _metric_card("Models Compared", str(len(comparison_df)), "#b388ff")
-
-        st.markdown("---")
-        st.markdown("### Model Comparison")
-        display_cols = [
-            "Model",
-            "Imbalance Method",
-            "Accuracy",
-            "Balanced Accuracy",
-            "Macro F1",
-            "Weighted F1",
-            "Minority Class Recall",
-            "False Alarm Rate",
-            "Attack Recall",
-            "ROC AUC Macro OvR",
-            "CV Macro F1 Mean",
-            "CV Macro F1 Std",
-            "Train/Test Gap",
-            "Notes",
-        ]
-        existing_cols = [col for col in display_cols if col in comparison_df.columns]
-        numeric_cols = comparison_df[existing_cols].select_dtypes(include=[np.number]).columns.tolist()
-        st.dataframe(
-            comparison_df[existing_cols].style.format({col: "{:.4f}" for col in numeric_cols}),
-            use_container_width=True,
-        )
-
-        st.markdown("---")
-        st.markdown("### Best Model Detailed Evaluation")
-        detail_col1, detail_col2 = st.columns(2)
-
-        with detail_col1:
-            st.markdown("#### Classification Report")
-            if not classification_df.empty:
-                st.dataframe(classification_df, use_container_width=True)
-            else:
-                st.info("Classification report CSV is not available.")
-
-        with detail_col2:
-            st.markdown("#### Confusion Matrix")
-            if not confusion_df.empty:
-                st.dataframe(confusion_df, use_container_width=True)
-            else:
-                st.info("Confusion matrix CSV is not available.")
-
-        st.markdown("---")
-        st.markdown("### Report Figures")
-        if figures_df.empty:
-            st.info("No generated report figure catalog found.")
-        else:
-            figure_options = figures_df["Tên hình"].tolist()
-            default_index = 0
-            selected_figure = st.selectbox("Select report figure", figure_options, index=default_index)
-            figure_row = figures_df.loc[figures_df["Tên hình"] == selected_figure].iloc[0]
-            figure_path = Path(figure_row["File ảnh"])
-            if figure_path.exists():
-                st.image(str(figure_path), caption=selected_figure, use_column_width=True)
-            else:
-                st.warning("Không tìm thấy hình đã chọn. Vui lòng chạy lại notebook báo cáo để sinh biểu đồ.")
-
-            with st.expander("Show all generated report figures"):
-                for _, row in figures_df.iterrows():
-                    path = Path(row["File ảnh"])
-                    if path.exists():
-                        st.image(str(path), caption=row["Tên hình"], use_column_width=True)
-
-        st.markdown("---")
-        st.markdown("### Current Selected Model")
-        selected_model_path = Path(MODELS_DIR) / "selected_model.pkl"
-        if selected_model_path.exists():
-            st.success("Mô hình triển khai hiện tại đã sẵn sàng.")
-        else:
-            st.warning("Chưa tìm thấy mô hình triển khai hiện tại. Vui lòng huấn luyện lại mô hình.")
-
-
-# ═══════════════════════════════════════════════════════════
-#  TAB 2: LIVE MONITOR
-# ═══════════════════════════════════════════════════════════
-with tab2:
+# Live Monitor
+with tab_live:
     st.markdown("## Live Traffic Monitor")
 
     # Initialize session state
@@ -603,9 +726,9 @@ with tab2:
     display_events = real_events if real_events else st.session_state.ips_events
     using_real_events = bool(real_events)
     if using_real_events:
-        st.success("Đang đọc sự kiện IDS/IPS thực tế từ nhật ký giám sát.")
+        st.success("Reading real IDS/IPS events from the monitoring log.")
     else:
-        st.info("Chưa có sự kiện thật. Bấm Start IPS để dashboard tự chạy bộ phát hiện trên máy Victim.")
+        st.info("No real event yet. Click Start IPS on the Kali Victim, then run traffic from Ubuntu Attacker.")
     if st.session_state.live_ips_message:
         st.caption(st.session_state.live_ips_message)
 
@@ -656,16 +779,16 @@ with tab2:
         last_attack = recent_attacks[-1]
         st.markdown(f"""
         <div class="attack-alert">
-            ⚠️ ATTACK DETECTED: {last_attack.get('prediction', 'Unknown')}
-            <br>Source: {last_attack.get('src_ip', 'N/A')} → {last_attack.get('dst_ip', 'N/A')}
+            ATTACK DETECTED: {last_attack.get('prediction', 'Unknown')}
+            <br>Source: {last_attack.get('src_ip', 'N/A')} -> {last_attack.get('dst_ip', 'N/A')}
             <br>Confidence: {last_attack.get('confidence', 0):.1%}
-            {'<br>🔒 IP BLOCKED' if last_attack.get('blocked') else ''}
+            {'<br>IP BLOCKED' if last_attack.get('blocked') else ''}
         </div>
         """, unsafe_allow_html=True)
     else:
         st.markdown("""
         <div class="benign-status">
-            ✓ SYSTEM NORMAL — No threats detected
+            SYSTEM NORMAL - No threats detected
         </div>
         """, unsafe_allow_html=True)
 
@@ -675,36 +798,39 @@ with tab2:
     ctrl_col1, ctrl_col2, ctrl_col3 = st.columns(3)
 
     with ctrl_col1:
-        if st.button("▶ Start IPS", type="primary", use_container_width=True):
+        if st.button("Start IPS", type="primary", use_container_width=True):
             if _is_process_running(st.session_state.live_ips_process):
-                st.session_state.live_ips_message = "IPS đang chạy."
+                st.session_state.live_ips_message = "IPS is already running."
             else:
                 try:
                     st.session_state.live_ips_process = _start_live_ips_process(
                         capture_interface,
+                        victim_ip,
                         threshold,
                         sim_mode,
+                        mitigation_backend,
                     )
                     mode = "simulation" if sim_mode else "live blocking"
                     iface = capture_interface.strip() or "auto"
                     st.session_state.live_ips_message = (
-                        f"Đã khởi chạy live_ips.py ({mode}) trên interface: {iface}. "
-                        "Nếu không thấy event, kiểm tra quyền bắt gói hoặc tên interface."
+                        f"Started live_ips.py ({mode}) on interface: {iface}, "
+                        f"firewall backend: {mitigation_backend}. "
+                        "If no event appears, check capture permission and interface name."
                     )
                 except Exception as exc:
-                    st.session_state.live_ips_message = f"Không thể khởi chạy IPS: {exc}"
+                    st.session_state.live_ips_message = f"Could not start IPS: {exc}"
             st.rerun()
 
     with ctrl_col2:
-        if st.button("⏹ Stop IPS", use_container_width=True):
+        if st.button("Stop IPS", use_container_width=True):
             _stop_live_ips_process()
-            st.session_state.live_ips_message = "Đã dừng live_ips.py."
+            st.session_state.live_ips_message = "Stopped live_ips.py."
             st.rerun()
 
     with ctrl_col3:
-        if st.button("🗑 Clear Log", use_container_width=True):
+        if st.button("Clear Log", use_container_width=True):
             if using_real_events:
-                st.warning("Nhật ký thực tế không được xóa trên dashboard. Dừng replay và chạy lại với tùy chọn reset nếu cần làm mới dữ liệu.")
+                st.warning("Real monitoring logs are not cleared from the dashboard. Stop IPS and reset the log manually if needed.")
             else:
                 st.session_state.ips_events = []
                 st.rerun()
@@ -718,111 +844,31 @@ with tab2:
 
             if is_blocked:
                 css_class = "log-blocked"
-                icon = "🔒"
+                icon = "[BLOCKED]"
             elif is_attack:
                 css_class = "log-attack"
-                icon = "⚠️"
+                icon = "[ATTACK]"
             else:
                 css_class = "log-benign"
-                icon = "✓"
+                icon = "[OK]"
 
             st.markdown(f"""
             <div class="log-entry {css_class}">
                 {icon} [{event.get('timestamp', '')}]
-                {event.get('src_ip', 'N/A')} → {event.get('dst_ip', 'N/A')} |
+                {event.get('src_ip', 'N/A')} -> {event.get('dst_ip', 'N/A')} |
                 <b>{event.get('prediction', 'Unknown')}</b>
                 ({event.get('confidence', 0):.1%})
-                {'| 🔒 BLOCKED' if is_blocked else ''}
+                | {event.get('victim_os', 'os?')}/{event.get('mitigation_backend', 'backend?')}
+                {'| BLOCKED' if is_blocked else ''}
             </div>
             """, unsafe_allow_html=True)
     else:
-        st.info("Chưa có event. Trên Victim hãy bấm Start IPS, sau đó chạy lệnh tấn công từ máy Attacker.")
+        st.info("No event yet. On Kali Victim click Start IPS, then run traffic commands from Ubuntu Attacker.")
 
 
-# ═══════════════════════════════════════════════════════════
-#  TAB 3: AUDIT
-# ═══════════════════════════════════════════════════════════
-with tab_audit:
-    st.markdown("## Model Audit")
-
-    summary_path = os.path.join(AUDIT_DIR, "audit_summary.md")
-    metrics_path = os.path.join(AUDIT_DIR, "weighted_metrics_by_split.csv")
-    per_class_path = os.path.join(AUDIT_DIR, "per_class_metrics.csv")
-    gaps_path = os.path.join(AUDIT_DIR, "generalization_gaps.csv")
-    dist_path = os.path.join(AUDIT_DIR, "class_distribution.csv")
-    leakage_path = os.path.join(AUDIT_DIR, "split_leakage_checks.csv")
-    cv_path = os.path.join(AUDIT_DIR, "cross_validation.csv")
-
-    if not os.path.exists(metrics_path):
-        st.warning("Chưa có kết quả audit mô hình. Có thể bỏ qua tab này nếu demo tập trung vào notebook báo cáo và Live Monitor.")
-    else:
-        st.caption("Nguồn dữ liệu: kết quả audit mô hình đã sinh trong quá trình đánh giá.")
-
-        if os.path.exists(summary_path):
-            with open(summary_path, "r", encoding="utf-8") as f:
-                st.markdown(f.read())
-
-        st.markdown("---")
-        st.markdown("### Weighted Metrics by Split")
-        metrics_df = pd.read_csv(metrics_path)
-        st.dataframe(metrics_df, use_container_width=True)
-
-        if os.path.exists(gaps_path):
-            st.markdown("### Generalization Gap")
-            gaps_df = pd.read_csv(gaps_path)
-            st.dataframe(
-                gaps_df.style.highlight_max(subset=["validation_test_f1_gap"], color="#4a1010"),
-                use_container_width=True,
-            )
-
-        if os.path.exists(per_class_path):
-            st.markdown("### Per-Class Precision / Recall / F1")
-            per_class_df = pd.read_csv(per_class_path)
-            audit_models = sorted(per_class_df["model"].unique())
-            audit_splits = sorted(per_class_df["split"].unique())
-            selected_audit_model = st.selectbox("Audit model", audit_models, key="audit_model")
-            selected_audit_split = st.selectbox("Audit split", audit_splits, index=0, key="audit_split")
-            filtered_per_class = per_class_df[
-                (per_class_df["model"] == selected_audit_model)
-                & (per_class_df["split"] == selected_audit_split)
-            ]
-            st.dataframe(
-                filtered_per_class.style.highlight_min(
-                    subset=["precision", "recall", "f1_score"],
-                    color="#4a1010",
-                ),
-                use_container_width=True,
-            )
-
-            safe_model = selected_audit_model.lower().replace(" ", "_")
-            cm_path = os.path.join(
-                AUDIT_DIR,
-                f"{safe_model}_{selected_audit_split.lower()}_confusion_matrix.png",
-            )
-            if os.path.exists(cm_path):
-                st.markdown("### Confusion Matrix")
-                st.image(cm_path, use_column_width=True)
-
-        if os.path.exists(dist_path):
-            st.markdown("### Class Distribution")
-            dist_df = pd.read_csv(dist_path)
-            st.dataframe(dist_df, use_container_width=True)
-
-        if os.path.exists(leakage_path):
-            st.markdown("### Split / Leakage Checks")
-            leakage_df = pd.read_csv(leakage_path)
-            st.dataframe(leakage_df, use_container_width=True)
-
-        if os.path.exists(cv_path):
-            st.markdown("### Cross-Validation")
-            cv_df = pd.read_csv(cv_path)
-            st.dataframe(cv_df, use_container_width=True)
-
-
-# ═══════════════════════════════════════════════════════════
-#  TAB 4: SETTINGS
-# ═══════════════════════════════════════════════════════════
-with tab3:
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# Settings
+with tab_settings:
     st.markdown("## System Configuration")
 
     st.markdown("### Model Selection")
@@ -836,7 +882,7 @@ with tab3:
         selected = st.selectbox("Active Model for IPS", model_files, index=default_index)
         st.info(f"Selected model: **{selected}** - used for live traffic classification")
     else:
-        st.warning("Chưa có mô hình đã huấn luyện. Vui lòng chạy notebook báo cáo trước.")
+        st.warning("No trained model found. Please train the model first.")
 
     st.markdown("---")
 
@@ -849,6 +895,23 @@ FLOW_CHECK_INTERVAL = 5.0 seconds
     """)
 
     st.markdown("---")
+    st.markdown("### Victim App Install")
+    st.code("""
+# Kali Victim - run once with sudo
+sudo python3 app.py --install-victim-app --interface eth0 --live-agent
+
+# Kali Victim safe demo mode without real firewall blocking
+sudo python3 app.py --install-victim-app --interface eth0
+
+# Remove desktop shortcut and startup agent on Kali
+sudo python3 app.py --uninstall-victim-app
+    """, language="bash")
+    st.info(
+        "Sau khi cài, Kali Victim sẽ có icon DDoS IPS Dashboard ngoài Desktop. "
+        "Agent tự chạy nền khi Kali khởi động, còn icon dùng để mở dashboard như một cửa sổ ứng dụng."
+    )
+
+    st.markdown("---")
     st.markdown("### Backend API")
     if BACKEND_API_URL:
         if st.button("Test Backend API", use_container_width=True):
@@ -859,21 +922,35 @@ FLOW_CHECK_INTERVAL = 5.0 seconds
                 st.error("Backend API is not reachable.")
             st.json(health)
     else:
-        st.info("Dashboard đang chạy ở chế độ cục bộ, không sử dụng Backend API bên ngoài.")
+        st.info("Dashboard is running in local mode without an external Backend API.")
+
+    st.markdown("---")
+    st.markdown("### Ubuntu Attacker Commands")
+    st.code("""
+# Run on Ubuntu Attacker
+sudo python3 tools/ddos_traffic_generator.py --target <victim-ip> --attack benign --duration 20
+sudo python3 tools/ddos_traffic_generator.py --target <victim-ip> --attack syn_flood --duration 20
+sudo python3 tools/ddos_traffic_generator.py --target <victim-ip> --attack udp_flood --duration 20
+sudo python3 tools/ddos_traffic_generator.py --target <victim-ip> --attack mixed --duration 60 --pps 600 --spoof-sources 10.10.1.10,10.10.1.11,10.10.1.12,10.10.1.13,10.10.1.14
+    """, language="bash")
+    st.info(
+        "Ubuntu Attacker dùng lệnh để sinh từng loại lưu lượng kiểm thử. "
+        "Kali Victim chỉ cần chạy agent và mở dashboard để quan sát phát hiện, cảnh báo và chặn IP. "
+        "Lệnh mixed mô phỏng nhiều nguồn tấn công cùng lúc để phục vụ phần demo bảo vệ."
+    )
 
     st.markdown("---")
 
     st.markdown("### Quick Start Commands")
     st.code("""
-# Replay IDS/IPS demo without a network card
-python replay_ips.py --speed 0.2 --limit 500 --reset
-
 # Launch Dashboard
 streamlit run frontend/app.py
 
-# Two-VM traffic demo
-python tools/ddos_traffic_generator.py --target <victim-ip> --attack benign --duration 20
-python tools/ddos_traffic_generator.py --target <victim-ip> --attack syn --duration 20
+# Ubuntu Attacker traffic demo
+sudo python3 tools/ddos_traffic_generator.py --target <victim-ip> --attack benign --duration 20
+sudo python3 tools/ddos_traffic_generator.py --target <victim-ip> --attack syn_flood --duration 20
+sudo python3 tools/ddos_traffic_generator.py --target <victim-ip> --attack udp_flood --duration 20
+sudo python3 tools/ddos_traffic_generator.py --target <victim-ip> --attack mixed --duration 60 --pps 600 --spoof-sources 10.10.1.10,10.10.1.11,10.10.1.12,10.10.1.13,10.10.1.14
     """, language="powershell")
 
     st.markdown("---")
@@ -884,6 +961,6 @@ python tools/ddos_traffic_generator.py --target <victim-ip> --attack syn --durat
         "Task": "Multiclass DDoS detection",
         "Classes": 7,
         "Models": 5,
-        "Deployment mode": "Local IDS/IPS simulation",
+        "Deployment mode": "Local IDS/IPS demo",
     })
 

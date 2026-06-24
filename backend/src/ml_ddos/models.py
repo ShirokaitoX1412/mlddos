@@ -19,27 +19,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import seaborn as sns
 from sklearn.base import BaseEstimator, TransformerMixin, clone
 from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier
 from sklearn.exceptions import FitFailedWarning
 from sklearn.metrics import (
     accuracy_score,
-    auc,
     classification_report,
-    confusion_matrix,
     f1_score,
     make_scorer,
     precision_score,
     recall_score,
     roc_auc_score,
-    roc_curve,
 )
 from sklearn.model_selection import (
     RandomizedSearchCV,
@@ -47,7 +39,6 @@ from sklearn.model_selection import (
     StratifiedKFold,
     train_test_split,
     cross_validate,
-    learning_curve,
 )
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.neural_network import MLPClassifier
@@ -151,8 +142,6 @@ class TrainingConfig:
     correlation_threshold: float = 0.9
     enable_smote: bool = True
     n_jobs: int = -1
-    max_shap_samples: int = 500
-    max_learning_curve_samples: int = 25000
     overfit_gap_warning: float = 0.10
     balance_training: bool = True
     attack_to_benign_ratio: float = 1.0
@@ -495,8 +484,6 @@ def train_and_evaluate_from_raw(
         }
         summary_rows.append(row)
 
-        plot_feature_importance(final_model, candidate["name"], results_dir)
-        maybe_generate_shap(final_model, X_test, candidate["name"], class_names, results_dir, config)
 
     summary = pd.DataFrame(summary_rows).sort_values("Selection Score", ascending=False)
     summary.to_csv(os.path.join(results_dir, "robust_model_summary.csv"), index=False)
@@ -506,9 +493,6 @@ def train_and_evaluate_from_raw(
     selected_model = final_models[selected_name]
     save_model(selected_model, "selected_model", models_dir)
 
-    plot_train_cv_test(summary, results_dir)
-    plot_learning_curve_safe(selected_model, X_train, y_train, cv, groups, selected_name, results_dir, config)
-    write_generalization_report(summary, selected_name, results_dir, config)
 
     cv_scores_df = summary.set_index("Model")[
         ["CV Accuracy Mean", "CV Accuracy Std", "CV F1-Score Mean", "CV F1-Score Std", "CV F1-Macro Mean"]
@@ -1144,11 +1128,6 @@ def evaluate_split(
         for class_name in class_names
     ]
 
-    if save_artifacts:
-        write_classification_report(y, y_pred, class_names, model_name, split_name, results_dir)
-        plot_confusion_matrix(y, y_pred, class_names, model_name, split_name, results_dir)
-        if y_proba is not None:
-            plot_roc_curve(y, y_proba, class_names, model_name, split_name, results_dir)
     return metrics
 
 
@@ -1193,279 +1172,6 @@ def safe_name(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
 
 
-def write_classification_report(
-    y_true: np.ndarray,
-    y_pred: np.ndarray,
-    class_names: list[str],
-    model_name: str,
-    split_name: str,
-    results_dir: str,
-) -> None:
-    path = os.path.join(results_dir, f"{safe_name(model_name)}_{split_name}_classification_report.txt")
-    report = classification_report(y_true, y_pred, target_names=class_names, zero_division=0)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(f"Classification Report: {model_name} - {split_name}\n")
-        f.write("=" * 80 + "\n")
-        f.write(report)
-
-
-def plot_confusion_matrix(
-    y_true: np.ndarray,
-    y_pred: np.ndarray,
-    class_names: list[str],
-    model_name: str,
-    split_name: str,
-    results_dir: str,
-) -> None:
-    cm = confusion_matrix(y_true, y_pred)
-    plt.figure(figsize=(10, 8))
-    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=class_names, yticklabels=class_names)
-    plt.title(f"Confusion Matrix - {model_name} - {split_name}")
-    plt.xlabel("Predicted")
-    plt.ylabel("Actual")
-    plt.xticks(rotation=45, ha="right")
-    plt.tight_layout()
-    plt.savefig(os.path.join(results_dir, f"{safe_name(model_name)}_{split_name}_confusion_matrix.png"), dpi=150)
-    plt.close()
-
-
-def plot_roc_curve(
-    y_true: np.ndarray,
-    y_proba: np.ndarray,
-    class_names: list[str],
-    model_name: str,
-    split_name: str,
-    results_dir: str,
-) -> None:
-    n_classes = len(class_names)
-    plt.figure(figsize=(10, 8))
-    if n_classes == 2:
-        fpr, tpr, _ = roc_curve(y_true, y_proba[:, 1])
-        plt.plot(fpr, tpr, lw=2, label=f"AUC = {auc(fpr, tpr):.4f}")
-    else:
-        y_bin = label_binarize(y_true, classes=list(range(n_classes)))
-        colors = plt.cm.Set1(np.linspace(0, 1, n_classes))
-        for idx, color in enumerate(colors):
-            fpr, tpr, _ = roc_curve(y_bin[:, idx], y_proba[:, idx])
-            plt.plot(fpr, tpr, color=color, lw=2, label=f"{class_names[idx]} AUC={auc(fpr, tpr):.4f}")
-    plt.plot([0, 1], [0, 1], "k--", lw=1)
-    plt.xlabel("False Positive Rate")
-    plt.ylabel("True Positive Rate")
-    plt.title(f"ROC Curve - {model_name} - {split_name}")
-    plt.legend(loc="lower right", fontsize=8)
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(os.path.join(results_dir, f"{safe_name(model_name)}_{split_name}_roc_curve.png"), dpi=150)
-    plt.close()
-
-
-def plot_feature_importance(estimator, model_name: str, results_dir: str, top_n: int = 25) -> None:
-    model = estimator.named_steps["model"]
-    if not hasattr(model, "feature_importances_"):
-        return
-    feature_names = estimator.named_steps["preprocess"].get_feature_names_out()
-    importances = np.asarray(model.feature_importances_)
-    limit = min(top_n, len(importances))
-    order = np.argsort(importances)[::-1][:limit]
-    rows = pd.DataFrame({"feature": feature_names[order], "importance": importances[order]})
-    rows.to_csv(os.path.join(results_dir, f"{safe_name(model_name)}_feature_importance.csv"), index=False)
-
-    plt.figure(figsize=(12, 8))
-    plt.barh(rows["feature"][::-1], rows["importance"][::-1], color="#4477AA")
-    plt.xlabel("Importance")
-    plt.title(f"Top Feature Importances - {model_name}")
-    plt.tight_layout()
-    plt.savefig(os.path.join(results_dir, f"{safe_name(model_name)}_feature_importance.png"), dpi=150)
-    plt.close()
-
-
-def maybe_generate_shap(
-    estimator,
-    X_test: pd.DataFrame,
-    model_name: str,
-    class_names: list[str],
-    results_dir: str,
-    config: TrainingConfig,
-) -> None:
-    model = estimator.named_steps["model"]
-    if type(model).__name__ not in {"RandomForestClassifier", "ExtraTreesClassifier", "XGBClassifier"}:
-        return
-    try:
-        import shap
-
-        sample = X_test.sample(
-            n=min(config.max_shap_samples, len(X_test)),
-            random_state=config.random_state,
-        )
-        X_tx = estimator.named_steps["preprocess"].transform(sample)
-        feature_names = estimator.named_steps["preprocess"].get_feature_names_out()
-        explainer = shap.TreeExplainer(model)
-        shap_values = explainer.shap_values(X_tx)
-
-        plt.figure(figsize=(12, 8))
-        shap.summary_plot(
-            shap_values,
-            X_tx,
-            feature_names=feature_names,
-            class_names=class_names,
-            plot_type="bar",
-            show=False,
-            max_display=25,
-        )
-        plt.title(f"SHAP Summary - {model_name}")
-        plt.tight_layout()
-        plt.savefig(os.path.join(results_dir, f"{safe_name(model_name)}_shap_summary_bar.png"), dpi=150)
-        plt.close()
-    except Exception as exc:  # SHAP is helpful but should not break training.
-        LOGGER.warning("SHAP generation skipped for %s: %s", model_name, exc)
-
-
-def plot_train_cv_test(summary: pd.DataFrame, results_dir: str) -> None:
-    plot_df = summary[["Model", "Train F1-Score", "CV F1-Score Mean", "Test F1-Score"]].copy()
-    plot_df = plot_df.melt(id_vars="Model", var_name="Split", value_name="F1")
-    plt.figure(figsize=(13, 7))
-    sns.barplot(data=plot_df, x="Model", y="F1", hue="Split")
-    plt.title("Train vs Cross-Validation vs Test F1")
-    plt.xticks(rotation=20, ha="right")
-    plt.ylim(0, 1.02)
-    plt.tight_layout()
-    plt.savefig(os.path.join(results_dir, "train_cv_test_f1_comparison.png"), dpi=150)
-    plt.close()
-
-
-def plot_learning_curve_safe(
-    estimator,
-    X: pd.DataFrame,
-    y: np.ndarray,
-    cv,
-    groups: pd.Series | None,
-    model_name: str,
-    results_dir: str,
-    config: TrainingConfig,
-) -> None:
-    try:
-        if len(X) > config.max_learning_curve_samples:
-            _, X_small, _, y_small = train_test_split(
-                X,
-                y,
-                test_size=config.max_learning_curve_samples,
-                random_state=config.random_state,
-                stratify=y,
-            )
-            X_curve, y_curve = X_small, y_small
-            groups_curve = None
-        else:
-            X_curve, y_curve = X, y
-            groups_curve = groups
-
-        kwargs = {"groups": groups_curve} if groups_curve is not None else {}
-        train_sizes, train_scores, val_scores = learning_curve(
-            clone(estimator),
-            X_curve,
-            y_curve,
-            cv=cv if groups_curve is not None else StratifiedKFold(n_splits=3, shuffle=True, random_state=config.random_state),
-            scoring="f1_weighted",
-            train_sizes=np.linspace(0.2, 1.0, 5),
-            n_jobs=config.n_jobs,
-            **kwargs,
-        )
-        plt.figure(figsize=(10, 6))
-        plt.plot(train_sizes, np.nanmean(train_scores, axis=1), marker="o", label="Train")
-        plt.plot(train_sizes, np.nanmean(val_scores, axis=1), marker="o", label="Validation")
-        plt.fill_between(
-            train_sizes,
-            np.nanmean(val_scores, axis=1) - np.nanstd(val_scores, axis=1),
-            np.nanmean(val_scores, axis=1) + np.nanstd(val_scores, axis=1),
-            alpha=0.2,
-        )
-        plt.title(f"Learning Curve - {model_name}")
-        plt.xlabel("Training examples")
-        plt.ylabel("Weighted F1")
-        plt.legend()
-        plt.grid(True, alpha=0.3)
-        plt.tight_layout()
-        plt.savefig(os.path.join(results_dir, "selected_model_learning_curve.png"), dpi=150)
-        plt.close()
-    except Exception as exc:
-        LOGGER.warning("Learning curve skipped: %s", exc)
-
-
-def write_generalization_report(
-    summary: pd.DataFrame,
-    selected_name: str,
-    results_dir: str,
-    config: TrainingConfig,
-) -> None:
-    path = os.path.join(results_dir, "generalization_report.md")
-    warnings_rows = summary[
-        (summary["Overfit Gap F1"] > config.overfit_gap_warning)
-        | (summary["Generalization Gap F1"] > config.overfit_gap_warning)
-    ]
-    with open(path, "w", encoding="utf-8") as f:
-        f.write("# Generalization Report\n\n")
-        f.write(f"Selected model: **{selected_name}**\n\n")
-        f.write("Selection is based on cross-validation weighted F1, macro F1, fold stability, and overfit penalty. ")
-        f.write("The held-out test set is reported as an external generalization check, not as the sole selector.\n\n")
-        f.write("## Why the Original Pipeline Likely Overfit\n\n")
-        f.write("- A single validation split can be too similar to the training data and hide distribution shift.\n")
-        f.write("- Precomputing preprocessing outside cross-validation risks fitting medians, scalers, or feature filters on validation data.\n")
-        f.write("- Weighted metrics can hide poor recall for minority DDoS classes.\n")
-        f.write("- Random row splitting can leak near-duplicate flows across train and validation.\n\n")
-        f.write("## Mitigations in This Pipeline\n\n")
-        f.write("- All preprocessing is inside sklearn/imblearn Pipelines and is refit per CV fold.\n")
-        f.write("- StratifiedKFold is used by default; StratifiedGroupKFold is used when session/IP/source grouping columns exist.\n")
-        f.write("- Class imbalance is detected and handled with class weights, balanced sample weights, and optional SMOTE variants.\n")
-        f.write("- Model selection penalizes high train-CV gaps and unstable fold performance.\n")
-        f.write("- Potential identifier/leakage columns and highly correlated features are removed using training-fold statistics only.\n\n")
-        if warnings_rows.empty:
-            f.write("## Overfitting Warnings\n\nNo large F1 gaps exceeded the configured threshold.\n\n")
-        else:
-            f.write("## Overfitting Warnings\n\n")
-            for _, row in warnings_rows.iterrows():
-                f.write(
-                    f"- {row['Model']}: train-CV gap={row['Overfit Gap F1']:.4f}, "
-                    f"CV-test gap={row['Generalization Gap F1']:.4f}. "
-                    "Likely causes include duplicate/near-duplicate flows, class distribution shift, "
-                    "or attack-source/domain shift between train and test.\n"
-                )
-        f.write("\n## Summary Table\n\n")
-        f.write(dataframe_to_markdown(summary))
-
-
-def generate_markdown_report(val_scores_df: pd.DataFrame, test_scores_df: pd.DataFrame) -> str:
-    """Generate a concise Markdown report for compatibility with main.py."""
-    lines = ["## Robust Model Comparison", ""]
-    lines.append("### Cross-Validation Performance")
-    lines.append(dataframe_to_markdown(val_scores_df.reset_index()))
-    lines.append("")
-    lines.append("### Held-Out Test Performance")
-    lines.append(dataframe_to_markdown(test_scores_df.reset_index()))
-    lines.append("")
-    lines.append("Selection prioritizes stable cross-validation F1, macro F1, and low overfitting risk.")
-    return "\n".join(lines)
-
-
-def dataframe_to_markdown(df: pd.DataFrame) -> str:
-    """Render a small Markdown table without optional tabulate dependency."""
-    if df.empty:
-        return "_No rows._"
-    display = df.copy()
-    for col in display.columns:
-        if pd.api.types.is_float_dtype(display[col]):
-            display[col] = display[col].map(lambda value: "" if pd.isna(value) else f"{value:.6f}")
-        else:
-            display[col] = display[col].map(lambda value: "" if pd.isna(value) else str(value))
-
-    headers = [str(col) for col in display.columns]
-    lines = [
-        "| " + " | ".join(headers) + " |",
-        "| " + " | ".join(["---"] * len(headers)) + " |",
-    ]
-    for _, row in display.iterrows():
-        lines.append("| " + " | ".join(str(row[col]) for col in display.columns) + " |")
-    return "\n".join(lines)
-
-
 def close_logging_handlers() -> None:
     for handler in LOGGER.handlers[:]:
         handler.close()
@@ -1477,9 +1183,8 @@ def train_and_evaluate(preprocessed: dict, results_dir: str = RESULTS_DIR, model
     Backward-compatible adapter.
 
     The robust pipeline should be called with raw DataFrames through
-    ``train_and_evaluate_from_raw``. This adapter keeps older notebooks from
-    failing, but it cannot recover raw columns once arrays have already been
-    preprocessed.
+    ``train_and_evaluate_from_raw``. This adapter cannot recover raw columns
+    once arrays have already been preprocessed.
     """
     raise RuntimeError(
         "train_and_evaluate now requires raw DataFrames. "

