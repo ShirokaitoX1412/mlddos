@@ -74,6 +74,10 @@ FLOW_CHECK_INTERVAL = 5.0     # Seconds between flow aggregation checks
 DEFAULT_MODEL = "selected_model"
 
 
+# =============================================================================
+# NHOM 1 - KHAI BAO DAC TRUNG CICDDOS2019 VA ANH XA CICFLOWMETER
+# Dung khi bao cao: du lieu live duoc dua ve dung schema cua model da train.
+# =============================================================================
 CICDDOS_FEATURE_COLUMNS = [
     "Protocol", "Flow Duration", "Total Fwd Packets", "Total Backward Packets",
     "Fwd Packets Length Total", "Bwd Packets Length Total",
